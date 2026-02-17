@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Delivery Partner Mobile Application
 
 A production-ready mobile application for delivery partners in a spare-parts delivery platform, featuring real-time GPS tracking, secure authentication, offline resilience, and complete delivery workflow management.
@@ -276,3 +277,7 @@ For issues or questions, please refer to the documentation or create an issue in
 ## 📄 License
 
 MIT License - feel free to use this project for your own purposes.
+=======
+# Delivery-Partner-Mobile-Application
+Delivery Partner Mobile Application for Digifix car parts marketplace
+>>>>>>> 22fc4714334f90ae4e0e349b3726524bacc939cf
