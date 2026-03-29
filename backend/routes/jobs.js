@@ -65,6 +65,34 @@ router.get('/active', async (req, res, next) => {
 });
 
 /**
+ * GET /api/jobs/assigned
+ * Get partner's assigned deliveries waiting for action or pickup
+ */
+router.get('/assigned', async (req, res, next) => {
+    try {
+        const result = await query(
+            `SELECT id, order_number, customer_name, customer_phone,
+      pickup_address, pickup_latitude, pickup_longitude,
+      pickup_contact_name, pickup_contact_phone,
+      dropoff_address, dropoff_latitude, dropoff_longitude,
+      distance_km, payment_amount, items_description, special_instructions,
+      status, assigned_at, accepted_at, created_at
+      FROM delivery_jobs
+      WHERE partner_id = $1 AND status IN ('assigned', 'accepted')
+      ORDER BY assigned_at DESC NULLS LAST, created_at DESC`,
+            [req.user.id]
+        );
+
+        res.json({
+            success: true,
+            data: result.rows,
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
  * GET /api/jobs/history
  * Get partner's completed job history
  */
@@ -105,6 +133,27 @@ router.post('/:id/accept', async (req, res, next) => {
         await client.query('BEGIN');
 
         const jobId = parseInt(req.params.id);
+
+        const partnerStatusCheck = await client.query(
+            'SELECT status FROM delivery_partners WHERE id = $1',
+            [req.user.id]
+        );
+
+        if (partnerStatusCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+                success: false,
+                message: 'Partner not found',
+            });
+        }
+
+        if (partnerStatusCheck.rows[0].status !== 'online') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                message: 'You must be online to accept a job',
+            });
+        }
 
         // Check if partner already has an active job
         const activeJobCheck = await client.query(
@@ -165,63 +214,204 @@ router.post('/:id/accept', async (req, res, next) => {
 });
 
 /**
+ * POST /api/jobs/:id/reject
+ * Reject an assigned delivery and return it to the available pool
+ */
+router.post('/:id/reject', async (req, res, next) => {
+    const client = await getClient();
+
+    try {
+        await client.query('BEGIN');
+
+        const jobId = parseInt(req.params.id);
+        const rejectionCheck = await client.query(
+            `SELECT id, status, partner_id
+             FROM delivery_jobs
+             WHERE id = $1`,
+            [jobId]
+        );
+
+        if (rejectionCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+                success: false,
+                message: 'Job not found',
+            });
+        }
+
+        const job = rejectionCheck.rows[0];
+
+        if (job.partner_id !== req.user.id) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        if (!['assigned', 'accepted'].includes(job.status)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                message: 'Only assigned deliveries can be rejected',
+            });
+        }
+
+        const result = await client.query(
+            `UPDATE delivery_jobs
+             SET partner_id = NULL,
+                 status = 'available',
+                 assigned_at = NULL,
+                 accepted_at = NULL
+             WHERE id = $1
+             RETURNING id, order_number, status`,
+            [jobId]
+        );
+
+        await client.query(
+            'UPDATE delivery_partners SET status = $1 WHERE id = $2 AND status = $3',
+            ['online', req.user.id, 'busy']
+        );
+
+        await client.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: 'Assigned delivery rejected successfully',
+            data: result.rows[0],
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+});
+
+/**
  * PUT /api/jobs/:id/status
- * Update job status (picked_up, in_transit, delivered)
+ * Update job status with transition validation and logging
  */
 router.put(
     '/:id/status',
-    [body('status').isIn(['picked_up', 'in_transit', 'delivered'])],
+    [
+        body('status').isIn([
+            'accepted',
+            'arrived_at_pickup',
+            'picked_up',
+            'in_transit',
+            'arrived_at_dropoff',
+            'delivered',
+            'failed',
+        ]),
+        body('reason').optional().trim(),
+        body('latitude').optional().isFloat(),
+        body('longitude').optional().isFloat(),
+    ],
     async (req, res, next) => {
+        const client = await getClient();
         try {
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Invalid status',
+                    message: 'Invalid status update',
                     errors: errors.array(),
                 });
             }
 
             const jobId = parseInt(req.params.id);
-            const { status } = req.body;
+            const { status, reason, latitude, longitude } = req.body;
 
-            // Determine which timestamp field to update
-            let timestampField = '';
-            if (status === 'picked_up') timestampField = 'picked_up_at';
-            else if (status === 'delivered') timestampField = 'delivered_at';
+            await client.query('BEGIN');
 
-            const timestampUpdate = timestampField ? `, ${timestampField} = NOW()` : '';
-
-            const result = await query(
-                `UPDATE delivery_jobs 
-        SET status = $1 ${timestampUpdate}
-        WHERE id = $2 AND partner_id = $3
-        RETURNING id, order_number, status, ${timestampField || 'updated_at'}`,
-                [status, jobId, req.user.id]
+            // 1. Get current job status to validate transition
+            const currentJobRes = await client.query(
+                'SELECT status, partner_id FROM delivery_jobs WHERE id = $1',
+                [jobId]
             );
 
-            if (result.rows.length === 0) {
-                return res.status(404).json({
+            if (currentJobRes.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ success: false, message: 'Job not found' });
+            }
+
+            const currentStatus = currentJobRes.rows[0].status;
+            const jobPartnerId = currentJobRes.rows[0].partner_id;
+
+            // Verify authorization
+            if (jobPartnerId !== req.user.id) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ success: false, message: 'Unauthorized' });
+            }
+
+            // 2. Validate Transition
+            const transitions = {
+                assigned: ['accepted', 'failed'],
+                accepted: ['arrived_at_pickup', 'failed'],
+                arrived_at_pickup: ['picked_up', 'failed'],
+                picked_up: ['in_transit', 'failed'],
+                in_transit: ['arrived_at_dropoff', 'failed'],
+                arrived_at_dropoff: ['delivered', 'failed'],
+            };
+
+            if (status !== 'failed' && (!transitions[currentStatus] || !transitions[currentStatus].includes(status))) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
                     success: false,
-                    message: 'Job not found or not assigned to you',
+                    message: `Invalid transition from ${currentStatus} to ${status}`,
                 });
             }
 
-            // If delivered, update partner status back to online
-            if (status === 'delivered') {
-                await query(
-                    'UPDATE delivery_partners SET status = $1, total_deliveries = total_deliveries + 1 WHERE id = $2',
-                    ['online', req.user.id]
+            // 3. Update Job status
+            const timestampMap = {
+                accepted: 'accepted_at',
+                arrived_at_pickup: 'arrived_at_pickup_at',
+                picked_up: 'picked_up_at',
+                arrived_at_dropoff: 'arrived_at_dropoff_at',
+                delivered: 'delivered_at',
+                failed: 'failed_at',
+            };
+
+            const timestampField = timestampMap[status];
+            const timestampSQL = timestampField ? `, ${timestampField} = NOW()` : '';
+
+            const updateResult = await client.query(
+                `UPDATE delivery_jobs 
+                 SET status = $1 ${timestampSQL}
+                 WHERE id = $2
+                 RETURNING id, order_number, status`,
+                [status, jobId]
+            );
+
+            // 4. Create Status Log
+            await client.query(
+                `INSERT INTO job_status_logs (job_id, partner_id, status, reason, latitude, longitude)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [jobId, req.user.id, status, reason || null, latitude || null, longitude || null]
+            );
+
+            // 5. Post-update effects
+            if (status === 'delivered' || status === 'failed') {
+                // Return partner to online status
+                await client.query(
+                    'UPDATE delivery_partners SET status = $1, total_deliveries = total_deliveries + (CASE WHEN $3 = \'delivered\' THEN 1 ELSE 0 END) WHERE id = $2',
+                    ['online', req.user.id, status]
                 );
             }
 
+            await client.query('COMMIT');
+
             res.json({
                 success: true,
-                message: 'Job status updated successfully',
-                data: result.rows[0],
+                message: `Job status updated to ${status}`,
+                data: updateResult.rows[0],
             });
         } catch (error) {
+            await client.query('ROLLBACK');
             next(error);
+        } finally {
+            client.release();
         }
     }
 );

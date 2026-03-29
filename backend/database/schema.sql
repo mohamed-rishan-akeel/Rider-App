@@ -16,6 +16,11 @@ CREATE TABLE delivery_partners (
     phone VARCHAR(20) NOT NULL,
     vehicle_type VARCHAR(50),
     vehicle_number VARCHAR(50),
+    profile_photo_url TEXT,
+    bio TEXT,
+    address TEXT,
+    emergency_contact_name VARCHAR(255),
+    emergency_contact_phone VARCHAR(20),
     status VARCHAR(20) DEFAULT 'offline' CHECK (status IN ('online', 'offline', 'busy')),
     current_latitude DECIMAL(10, 8),
     current_longitude DECIMAL(11, 8),
@@ -63,14 +68,30 @@ CREATE TABLE delivery_jobs (
     special_instructions TEXT,
     
     -- Status Tracking
-    status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'assigned', 'picked_up', 'in_transit', 'delivered', 'cancelled')),
+    status VARCHAR(30) DEFAULT 'available' CHECK (status IN ('available', 'assigned', 'accepted', 'arrived_at_pickup', 'picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered', 'failed', 'cancelled')),
     
     -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     assigned_at TIMESTAMP,
+    accepted_at TIMESTAMP,
+    arrived_at_pickup_at TIMESTAMP,
     picked_up_at TIMESTAMP,
+    arrived_at_dropoff_at TIMESTAMP,
     delivered_at TIMESTAMP,
+    failed_at TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Job Status Logs Table (for history and audit)
+CREATE TABLE job_status_logs (
+    id SERIAL PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES delivery_jobs(id) ON DELETE CASCADE,
+    partner_id INTEGER REFERENCES delivery_partners(id) ON DELETE SET NULL,
+    status VARCHAR(30) NOT NULL,
+    reason TEXT, -- For 'failed' or 'cancelled' status
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Job Tracking Table (GPS location history)

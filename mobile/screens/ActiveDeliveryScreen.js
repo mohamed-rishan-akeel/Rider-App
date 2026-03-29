@@ -5,50 +5,89 @@ import {
     StyleSheet,
     Alert,
     ScrollView,
+    Modal,
+    TouchableOpacity,
+    FlatList,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
-import { Button } from '../components/Common';
+import { Button, SurfaceCard, StatusBadge, SectionHeader } from '../components/Common';
 import { jobsAPI } from '../services/api';
-import { startLocationTracking, stopLocationTracking } from '../services/location';
-import { colors, spacing, typography, shadows } from '../styles/theme';
+import {
+    startLocationTracking,
+    stopLocationTracking,
+    getCurrentLocation,
+} from '../services/location';
+import { colors, spacing, typography, radii } from '../styles/theme';
+
+const FAILURE_REASONS = [
+    'Customer unreachable',
+    'Merchant closed',
+    'Incorrect address',
+    'Vehicle breakdown',
+    'Accident',
+    'Weather conditions',
+    'Other',
+];
+
+const toneForStatus = (status) => {
+    if (['accepted', 'picked_up', 'in_transit'].includes(status)) return 'success';
+    if (['assigned', 'arrived_at_pickup', 'arrived_at_dropoff'].includes(status)) return 'info';
+    if (status === 'failed') return 'danger';
+    return 'warning';
+};
 
 export default function ActiveDeliveryScreen({ route, navigation }) {
     const [job, setJob] = useState(route.params?.job || null);
     const [loading, setLoading] = useState(false);
+    const [failureModalVisible, setFailureModalVisible] = useState(false);
 
     useEffect(() => {
         if (job) {
-            // Start location tracking
             startLocationTracking(job.id);
         }
-
         return () => {
-            // Stop tracking when leaving screen
             stopLocationTracking();
         };
     }, [job]);
 
-    const handleStatusUpdate = async (newStatus) => {
+    const handleStatusUpdate = async (newStatus, extraData = {}) => {
         setLoading(true);
         try {
-            await jobsAPI.updateStatus(job.id, newStatus);
+            let locationData = {};
+            try {
+                const location = await getCurrentLocation();
+                locationData = {
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                };
+            } catch (locErr) {
+                console.warn('Could not get location for status update');
+            }
+
+            await jobsAPI.updateStatus(job.id, newStatus, { ...extraData, ...locationData });
             setJob({ ...job, status: newStatus });
 
             if (newStatus === 'delivered') {
                 stopLocationTracking();
                 navigation.navigate('ProofOfDelivery', { jobId: job.id });
+            } else if (newStatus === 'failed') {
+                stopLocationTracking();
+                Alert.alert('Job Failed', 'The delivery was marked as failed and logged.');
+                navigation.goBack();
             }
         } catch (error) {
-            Alert.alert('Error', 'Failed to update status');
+            const errorMessage = error.response?.data?.message || 'Failed to update status';
+            Alert.alert('Error', errorMessage);
         } finally {
             setLoading(false);
+            setFailureModalVisible(false);
         }
     };
 
     if (!job) {
         return (
-            <View style={styles.container}>
-                <Text>No active delivery</Text>
+            <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>No active delivery selected.</Text>
             </View>
         );
     }
@@ -56,20 +95,17 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
     const getNextAction = () => {
         switch (job.status) {
             case 'assigned':
-                return {
-                    label: 'Arrived at Pickup',
-                    action: () => handleStatusUpdate('picked_up'),
-                };
+                return { label: 'Accept Job', action: () => handleStatusUpdate('accepted') };
+            case 'accepted':
+                return { label: 'Arrived at Pickup', action: () => handleStatusUpdate('arrived_at_pickup') };
+            case 'arrived_at_pickup':
+                return { label: 'Picked Up', action: () => handleStatusUpdate('picked_up') };
             case 'picked_up':
-                return {
-                    label: 'Start Delivery',
-                    action: () => handleStatusUpdate('in_transit'),
-                };
+                return { label: 'On the Way', action: () => handleStatusUpdate('in_transit') };
             case 'in_transit':
-                return {
-                    label: 'Mark as Delivered',
-                    action: () => handleStatusUpdate('delivered'),
-                };
+                return { label: 'Arrived at Dropoff', action: () => handleStatusUpdate('arrived_at_dropoff') };
+            case 'arrived_at_dropoff':
+                return { label: 'Delivered', action: () => handleStatusUpdate('delivered') };
             default:
                 return null;
         }
@@ -78,85 +114,109 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
     const nextAction = getNextAction();
 
     return (
-        <ScrollView style={styles.container}>
+        <View style={styles.container}>
             <MapView
                 style={styles.map}
                 initialRegion={{
-                    latitude: job.pickup_latitude,
-                    longitude: job.pickup_longitude,
+                    latitude: job.pickupLatitude ?? job.pickup_latitude,
+                    longitude: job.pickupLongitude ?? job.pickup_longitude,
                     latitudeDelta: 0.05,
                     longitudeDelta: 0.05,
                 }}
             >
                 <Marker
                     coordinate={{
-                        latitude: job.pickup_latitude,
-                        longitude: job.pickup_longitude,
+                        latitude: job.pickupLatitude ?? job.pickup_latitude,
+                        longitude: job.pickupLongitude ?? job.pickup_longitude,
                     }}
-                    title="Pickup Location"
+                    title="Pickup"
                     pinColor={colors.primary}
                 />
                 <Marker
                     coordinate={{
-                        latitude: job.dropoff_latitude,
-                        longitude: job.dropoff_longitude,
+                        latitude: job.dropoffLatitude ?? job.dropoff_latitude,
+                        longitude: job.dropoffLongitude ?? job.dropoff_longitude,
                     }}
-                    title="Dropoff Location"
+                    title="Dropoff"
                     pinColor={colors.secondary}
                 />
             </MapView>
 
-            <View style={styles.content}>
-                <View style={styles.statusBadge}>
-                    <Text style={styles.statusText}>
-                        {job.status.replace('_', ' ').toUpperCase()}
-                    </Text>
-                </View>
+            <ScrollView style={styles.sheet} contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
+                <SectionHeader
+                    eyebrow="Live Route"
+                    title={job.orderNumber ?? job.order_number}
+                    subtitle="Track the current stop, customer details, and route status."
+                    right={<StatusBadge label={job.status.replace(/_/g, ' ')} tone={toneForStatus(job.status)} />}
+                />
 
-                <Text style={styles.orderNumber}>{job.order_number}</Text>
+                <SurfaceCard style={styles.detailCard}>
+                    <Text style={styles.cardTitle}>Pickup</Text>
+                    <Text style={styles.address}>{job.pickupAddress ?? job.pickup_address}</Text>
+                    {job.pickupContactName || job.pickup_contact_name ? <Text style={styles.contact}>Contact: {job.pickupContactName ?? job.pickup_contact_name}</Text> : null}
+                    {job.pickupContactPhone || job.pickup_contact_phone ? <Text style={styles.contact}>Phone: {job.pickupContactPhone ?? job.pickup_contact_phone}</Text> : null}
+                </SurfaceCard>
 
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Pickup</Text>
-                    <Text style={styles.address}>{job.pickup_address}</Text>
-                    {job.pickup_contact_name && (
-                        <Text style={styles.contact}>Contact: {job.pickup_contact_name}</Text>
-                    )}
-                    {job.pickup_contact_phone && (
-                        <Text style={styles.contact}>Phone: {job.pickup_contact_phone}</Text>
-                    )}
-                </View>
+                <SurfaceCard style={styles.detailCard}>
+                    <Text style={styles.cardTitle}>Dropoff</Text>
+                    <Text style={styles.address}>{job.dropoffAddress ?? job.dropoff_address}</Text>
+                    <Text style={styles.contact}>Customer: {job.customerName ?? job.customer_name}</Text>
+                    <Text style={styles.contact}>Phone: {job.customerPhone ?? job.customer_phone}</Text>
+                </SurfaceCard>
 
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Dropoff</Text>
-                    <Text style={styles.address}>{job.dropoff_address}</Text>
-                    <Text style={styles.contact}>Customer: {job.customer_name}</Text>
-                    <Text style={styles.contact}>Phone: {job.customer_phone}</Text>
-                </View>
+                {job.itemSummary || job.items_description ? (
+                    <SurfaceCard style={styles.detailCard}>
+                        <Text style={styles.cardTitle}>Items</Text>
+                        <Text style={styles.body}>{job.itemSummary ?? job.items_description}</Text>
+                    </SurfaceCard>
+                ) : null}
 
-                {job.items_description && (
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Items</Text>
-                        <Text style={styles.items}>{job.items_description}</Text>
-                    </View>
-                )}
+                {job.specialInstructions || job.special_instructions ? (
+                    <SurfaceCard style={styles.detailCard}>
+                        <Text style={styles.cardTitle}>Special Instructions</Text>
+                        <Text style={styles.body}>{job.specialInstructions ?? job.special_instructions}</Text>
+                    </SurfaceCard>
+                ) : null}
 
-                {job.special_instructions && (
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Special Instructions</Text>
-                        <Text style={styles.instructions}>{job.special_instructions}</Text>
-                    </View>
-                )}
+                {nextAction ? (
+                    <Button title={nextAction.label} onPress={nextAction.action} loading={loading} style={styles.primaryAction} />
+                ) : null}
 
-                {nextAction && (
+                {job.status !== 'delivered' && job.status !== 'failed' ? (
                     <Button
-                        title={nextAction.label}
-                        onPress={nextAction.action}
-                        loading={loading}
-                        style={styles.actionButton}
+                        title="Mark as Failed"
+                        onPress={() => setFailureModalVisible(true)}
+                        variant="danger"
                     />
-                )}
-            </View>
-        </ScrollView>
+                ) : null}
+            </ScrollView>
+
+            <Modal
+                transparent
+                visible={failureModalVisible}
+                animationType="slide"
+                onRequestClose={() => setFailureModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <SurfaceCard style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Reason for Failure</Text>
+                        <FlatList
+                            data={FAILURE_REASONS}
+                            renderItem={({ item }) => (
+                                <TouchableOpacity
+                                    style={styles.reasonItem}
+                                    onPress={() => handleStatusUpdate('failed', { reason: item })}
+                                >
+                                    <Text style={styles.reasonText}>{item}</Text>
+                                </TouchableOpacity>
+                            )}
+                            keyExtractor={(item) => item}
+                        />
+                        <Button title="Cancel" onPress={() => setFailureModalVisible(false)} variant="outline" style={styles.cancelButton} />
+                    </SurfaceCard>
+                </View>
+            </Modal>
+        </View>
     );
 }
 
@@ -165,37 +225,33 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: colors.background,
     },
+    emptyWrap: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: colors.background,
+    },
+    emptyText: {
+        ...typography.body,
+    },
     map: {
-        height: 300,
+        height: 280,
     },
-    content: {
+    sheet: {
+        flex: 1,
+        marginTop: -spacing.lg,
+        borderTopLeftRadius: radii.xl,
+        borderTopRightRadius: radii.xl,
+        backgroundColor: colors.background,
+    },
+    sheetContent: {
         padding: spacing.lg,
+        paddingBottom: spacing.xl,
     },
-    statusBadge: {
-        alignSelf: 'flex-start',
-        backgroundColor: colors.primary,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        borderRadius: 20,
+    detailCard: {
         marginBottom: spacing.md,
     },
-    statusText: {
-        ...typography.caption,
-        color: colors.surface,
-        fontWeight: '600',
-    },
-    orderNumber: {
-        ...typography.h2,
-        marginBottom: spacing.lg,
-    },
-    section: {
-        marginBottom: spacing.lg,
-        padding: spacing.md,
-        backgroundColor: colors.surface,
-        borderRadius: 8,
-        ...shadows.small,
-    },
-    sectionTitle: {
+    cardTitle: {
         ...typography.h3,
         marginBottom: spacing.sm,
     },
@@ -205,17 +261,37 @@ const styles = StyleSheet.create({
     },
     contact: {
         ...typography.bodySmall,
-        color: colors.textSecondary,
     },
-    items: {
+    body: {
         ...typography.body,
     },
-    instructions: {
-        ...typography.body,
-        fontStyle: 'italic',
-        color: colors.warning,
+    primaryAction: {
+        marginBottom: spacing.sm,
     },
-    actionButton: {
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: colors.overlay,
+        justifyContent: 'flex-end',
+        padding: spacing.md,
+    },
+    modalContent: {
+        maxHeight: '80%',
+    },
+    modalTitle: {
+        ...typography.h2,
+        marginBottom: spacing.md,
+        textAlign: 'center',
+    },
+    reasonItem: {
+        paddingVertical: spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    reasonText: {
+        ...typography.body,
+        textAlign: 'center',
+    },
+    cancelButton: {
         marginTop: spacing.md,
     },
 });

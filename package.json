@@ -1,0 +1,22 @@
+{
+  "name": "delivary-partner-app",
+  "version": "1.0.0",
+  "description": "A production-ready mobile application for delivery partners in a spare-parts delivery platform, featuring real-time GPS tracking, secure authentication, offline resilience, and complete delivery workflow management.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohamed-rishan-akeel/Delivery-Partner-Mobile-Application.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mohamed-rishan-akeel/Delivery-Partner-Mobile-Application/issues"
+  },
+  "homepage": "https://github.com/mohamed-rishan-akeel/Delivery-Partner-Mobile-Application#readme"
+}

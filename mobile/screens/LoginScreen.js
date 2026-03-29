@@ -2,17 +2,16 @@ import React, { useState } from 'react';
 import {
     View,
     Text,
-    TextInput,
     StyleSheet,
     Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
 } from 'react-native';
-import { Button } from '../components/Common';
+import { Button, Input, SurfaceCard, StatusBadge } from '../components/Common';
 import { authAPI } from '../services/api';
 import { saveTokens, saveUserData } from '../services/storage';
-import { colors, spacing, typography } from '../styles/theme';
+import { colors, spacing, typography, radii } from '../styles/theme';
 
 export default function LoginScreen({ navigation }) {
     const [email, setEmail] = useState('');
@@ -32,8 +31,6 @@ export default function LoginScreen({ navigation }) {
 
             await saveTokens(accessToken, refreshToken);
             await saveUserData(partner);
-
-            // Navigation will be handled by App.js checking auth state
         } catch (error) {
             Alert.alert(
                 'Login Failed',
@@ -49,37 +46,41 @@ export default function LoginScreen({ navigation }) {
             style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                <View style={styles.header}>
-                    <Text style={styles.title}>Delivery Partner</Text>
-                    <Text style={styles.subtitle}>Sign in to start delivering</Text>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                <View style={styles.hero}>
+                    <StatusBadge label="Delivery Partner" tone="info" />
+                    <Text style={styles.title}>Professional dispatch at your fingertips.</Text>
+                    <Text style={styles.subtitle}>
+                        Sign in to manage routes, proofs, and live delivery updates from one polished workspace.
+                    </Text>
                 </View>
 
-                <View style={styles.form}>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Email"
+                <SurfaceCard style={styles.formCard}>
+                    <Text style={styles.formTitle}>Welcome back</Text>
+                    <Text style={styles.formSubtitle}>Use your partner account to continue.</Text>
+
+                    <Input
+                        label="Email"
+                        placeholder="partner@delivery.com"
                         value={email}
                         onChangeText={setEmail}
                         keyboardType="email-address"
                         autoCapitalize="none"
-                        placeholderTextColor={colors.textSecondary}
                     />
 
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Password"
+                    <Input
+                        label="Password"
+                        placeholder="Enter your password"
                         value={password}
                         onChangeText={setPassword}
                         secureTextEntry
-                        placeholderTextColor={colors.textSecondary}
                     />
 
                     <Button
                         title="Sign In"
                         onPress={handleLogin}
                         loading={loading}
-                        style={styles.loginButton}
+                        style={styles.primaryAction}
                     />
 
                     <Button
@@ -87,7 +88,7 @@ export default function LoginScreen({ navigation }) {
                         onPress={() => navigation.navigate('Register')}
                         variant="outline"
                     />
-                </View>
+                </SurfaceCard>
             </ScrollView>
         </KeyboardAvoidingView>
     );
@@ -100,35 +101,37 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         flexGrow: 1,
-        justifyContent: 'center',
         padding: spacing.lg,
+        justifyContent: 'center',
     },
-    header: {
-        alignItems: 'center',
-        marginBottom: spacing.xl * 2,
+    hero: {
+        backgroundColor: colors.primary,
+        borderRadius: radii.xl,
+        padding: spacing.xl,
+        marginBottom: spacing.lg,
     },
     title: {
-        ...typography.h1,
+        ...typography.hero,
+        color: colors.surface,
+        marginTop: spacing.md,
         marginBottom: spacing.sm,
     },
     subtitle: {
         ...typography.body,
-        color: colors.textSecondary,
+        color: 'rgba(255,255,255,0.86)',
     },
-    form: {
-        width: '100%',
+    formCard: {
+        padding: spacing.lg,
     },
-    input: {
-        borderWidth: 1,
-        borderColor: colors.border,
-        borderRadius: 8,
-        paddingVertical: spacing.md,
-        paddingHorizontal: spacing.md,
-        marginBottom: spacing.md,
-        ...typography.body,
-        backgroundColor: colors.surface,
+    formTitle: {
+        ...typography.h2,
+        marginBottom: spacing.xs,
     },
-    loginButton: {
-        marginBottom: spacing.md,
+    formSubtitle: {
+        ...typography.bodySmall,
+        marginBottom: spacing.lg,
+    },
+    primaryAction: {
+        marginBottom: spacing.sm,
     },
 });

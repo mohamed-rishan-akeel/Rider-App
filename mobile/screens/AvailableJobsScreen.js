@@ -7,11 +7,17 @@ import {
     RefreshControl,
     Alert,
 } from 'react-native';
-import { Button } from '../components/Common';
+import { useSelector } from 'react-redux';
+import { Button, SurfaceCard, EmptyState, StatusBadge, SectionHeader } from '../components/Common';
 import { jobsAPI } from '../services/api';
-import { colors, spacing, typography, shadows } from '../styles/theme';
+import { selectIsOnline, selectIsSyncing } from '../store/slices/availabilitySlice';
+import { colors, spacing, typography } from '../styles/theme';
+
+const formatCurrency = (value) => `$${Number(value || 0).toFixed(2)}`;
 
 export default function AvailableJobsScreen({ navigation }) {
+    const isOnline = useSelector(selectIsOnline);
+    const isSyncingAvailability = useSelector(selectIsSyncing);
     const [jobs, setJobs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -33,9 +39,19 @@ export default function AvailableJobsScreen({ navigation }) {
     };
 
     const handleAcceptJob = async (jobId) => {
+        if (!isOnline || isSyncingAvailability) {
+            Alert.alert(
+                'Unavailable',
+                isSyncingAvailability
+                    ? 'Please wait for your availability status to finish syncing.'
+                    : 'Go online before accepting a job.'
+            );
+            return;
+        }
+
         try {
             await jobsAPI.acceptJob(jobId);
-            Alert.alert('Success', 'Job accepted! Navigate to Active Delivery', [
+            Alert.alert('Success', 'Job accepted. Your dashboard will update next.', [
                 { text: 'OK', onPress: () => navigation.navigate('Home') },
             ]);
         } catch (error) {
@@ -44,53 +60,81 @@ export default function AvailableJobsScreen({ navigation }) {
     };
 
     const renderJob = ({ item }) => (
-        <View style={styles.jobCard}>
+        <SurfaceCard style={styles.jobCard}>
             <View style={styles.jobHeader}>
-                <Text style={styles.orderNumber}>{item.order_number}</Text>
-                <Text style={styles.payment}>${item.payment_amount.toFixed(2)}</Text>
+                <View style={styles.jobHeaderCopy}>
+                    <Text style={styles.orderNumber}>{item.order_number}</Text>
+                    <Text style={styles.customer}>{item.customer_name || 'Delivery order'}</Text>
+                </View>
+                <StatusBadge label="Open" tone="success" />
             </View>
 
-            <View style={styles.jobDetails}>
-                <Text style={styles.label}>Pickup:</Text>
-                <Text style={styles.address}>{item.pickup_address}</Text>
+            <Text style={styles.label}>Pickup</Text>
+            <Text style={styles.address}>{item.pickup_address}</Text>
+            <Text style={[styles.label, styles.spacedLabel]}>Dropoff</Text>
+            <Text style={styles.address}>{item.dropoff_address}</Text>
 
-                <Text style={[styles.label, { marginTop: spacing.sm }]}>Dropoff:</Text>
-                <Text style={styles.address}>{item.dropoff_address}</Text>
-
-                {item.distance_km && (
-                    <Text style={styles.distance}>{item.distance_km.toFixed(1)} km</Text>
-                )}
-
-                {item.items_description && (
-                    <Text style={styles.items}>Items: {item.items_description}</Text>
-                )}
+            <View style={styles.metaRow}>
+                <Text style={styles.metaText}>
+                    {item.distance_km ? `${item.distance_km.toFixed(1)} km` : 'Ready route'}
+                </Text>
+                <Text style={styles.payment}>{formatCurrency(item.payment_amount)}</Text>
             </View>
+
+            {item.items_description ? (
+                <Text style={styles.items}>Items: {item.items_description}</Text>
+            ) : null}
 
             <Button
                 title="Accept Job"
                 onPress={() => handleAcceptJob(item.id)}
+                disabled={!isOnline || isSyncingAvailability}
                 style={styles.acceptButton}
             />
-        </View>
+        </SurfaceCard>
     );
 
     return (
         <View style={styles.container}>
+            <View style={styles.header}>
+                <SectionHeader
+                    eyebrow="Dispatch"
+                    title="Available Jobs"
+                    subtitle="Fresh opportunities ready for acceptance."
+                />
+            </View>
+
+            {!isOnline && (
+                <SurfaceCard style={styles.banner}>
+                    <Text style={styles.bannerText}>
+                        You are offline. Turn availability on to start accepting work.
+                    </Text>
+                </SurfaceCard>
+            )}
+
             <FlatList
                 data={jobs}
                 renderItem={renderJob}
                 keyExtractor={(item) => item.id.toString()}
                 contentContainerStyle={styles.listContent}
                 refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={() => {
-                        setRefreshing(true);
-                        loadJobs();
-                    }} />
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={() => {
+                            setRefreshing(true);
+                            loadJobs();
+                        }}
+                    />
                 }
                 ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>No available jobs at the moment</Text>
-                    </View>
+                    <EmptyState
+                        title={loading ? 'Loading jobs...' : 'No available jobs'}
+                        body={
+                            loading
+                                ? 'We are checking the latest open jobs for your area.'
+                                : 'There are no open jobs at the moment. Pull to refresh and check again soon.'
+                        }
+                    />
                 }
             />
         </View>
@@ -102,59 +146,75 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: colors.background,
     },
+    header: {
+        paddingHorizontal: spacing.lg,
+        paddingTop: spacing.lg,
+    },
+    banner: {
+        marginHorizontal: spacing.lg,
+        marginTop: spacing.sm,
+        backgroundColor: colors.warningSoft,
+    },
+    bannerText: {
+        ...typography.bodySmall,
+        color: colors.warning,
+        fontWeight: '700',
+    },
     listContent: {
         padding: spacing.lg,
+        gap: spacing.md,
     },
     jobCard: {
-        backgroundColor: colors.surface,
-        borderRadius: 12,
-        padding: spacing.lg,
         marginBottom: spacing.md,
-        ...shadows.medium,
     },
     jobHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: spacing.md,
+        alignItems: 'flex-start',
+        gap: spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    jobHeaderCopy: {
+        flex: 1,
     },
     orderNumber: {
         ...typography.h3,
+        marginBottom: spacing.xs,
     },
-    payment: {
-        ...typography.h3,
-        color: colors.secondary,
-    },
-    jobDetails: {
-        marginBottom: spacing.md,
+    customer: {
+        ...typography.bodySmall,
+        color: colors.text,
     },
     label: {
         ...typography.caption,
-        fontWeight: '600',
+        color: colors.textSecondary,
+        fontWeight: '700',
         marginBottom: spacing.xs,
+    },
+    spacedLabel: {
+        marginTop: spacing.sm,
     },
     address: {
         ...typography.body,
     },
-    distance: {
+    metaRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: spacing.md,
+    },
+    metaText: {
         ...typography.bodySmall,
-        color: colors.textSecondary,
-        marginTop: spacing.sm,
+    },
+    payment: {
+        ...typography.bodySmall,
+        color: colors.secondary,
+        fontWeight: '800',
     },
     items: {
         ...typography.bodySmall,
         marginTop: spacing.sm,
-        fontStyle: 'italic',
     },
     acceptButton: {
-        marginTop: spacing.sm,
-    },
-    emptyContainer: {
-        padding: spacing.xl,
-        alignItems: 'center',
-    },
-    emptyText: {
-        ...typography.body,
-        color: colors.textSecondary,
+        marginTop: spacing.md,
     },
 });

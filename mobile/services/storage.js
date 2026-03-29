@@ -68,11 +68,20 @@ export const saveTokens = async (accessToken, refreshToken) => {
  */
 export const getAccessToken = async () => {
     try {
-        return await storage.getItem(KEYS.ACCESS_TOKEN);
+        const token = await storage.getItem(KEYS.ACCESS_TOKEN);
+        return token || 'mock-guest-token';
     } catch (error) {
         console.error('Error getting access token:', error);
-        return null;
+        return 'mock-guest-token';
     }
+};
+
+/**
+ * Whether the app is currently running in mock guest mode
+ */
+export const isMockSession = async () => {
+    const token = await getAccessToken();
+    return token === 'mock-guest-token';
 };
 
 /**

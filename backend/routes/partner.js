@@ -15,8 +15,9 @@ router.use(authenticateToken);
 router.get('/profile', async (req, res, next) => {
     try {
         const result = await query(
-            `SELECT id, email, full_name, phone, vehicle_type, vehicle_number, 
-      status, current_latitude, current_longitude, rating, total_deliveries, 
+            `SELECT id, email, full_name, phone, vehicle_type, vehicle_number,
+      profile_photo_url, bio, address, emergency_contact_name, emergency_contact_phone,
+      status, current_latitude, current_longitude, rating, total_deliveries,
       created_at, updated_at 
       FROM delivery_partners WHERE id = $1`,
             [req.user.id]
@@ -49,6 +50,11 @@ router.put(
         body('phone').optional().trim().notEmpty(),
         body('vehicleType').optional().trim(),
         body('vehicleNumber').optional().trim(),
+        body('profilePhotoUrl').optional().trim(),
+        body('bio').optional().trim(),
+        body('address').optional().trim(),
+        body('emergencyContactName').optional().trim(),
+        body('emergencyContactPhone').optional().trim(),
     ],
     async (req, res, next) => {
         try {
@@ -61,7 +67,17 @@ router.put(
                 });
             }
 
-            const { fullName, phone, vehicleType, vehicleNumber } = req.body;
+            const {
+                fullName,
+                phone,
+                vehicleType,
+                vehicleNumber,
+                profilePhotoUrl,
+                bio,
+                address,
+                emergencyContactName,
+                emergencyContactPhone,
+            } = req.body;
             const updates = [];
             const values = [];
             let paramCount = 1;
@@ -82,6 +98,26 @@ router.put(
                 updates.push(`vehicle_number = $${paramCount++}`);
                 values.push(vehicleNumber);
             }
+            if (profilePhotoUrl !== undefined) {
+                updates.push(`profile_photo_url = $${paramCount++}`);
+                values.push(profilePhotoUrl || null);
+            }
+            if (bio !== undefined) {
+                updates.push(`bio = $${paramCount++}`);
+                values.push(bio || null);
+            }
+            if (address !== undefined) {
+                updates.push(`address = $${paramCount++}`);
+                values.push(address || null);
+            }
+            if (emergencyContactName !== undefined) {
+                updates.push(`emergency_contact_name = $${paramCount++}`);
+                values.push(emergencyContactName || null);
+            }
+            if (emergencyContactPhone !== undefined) {
+                updates.push(`emergency_contact_phone = $${paramCount++}`);
+                values.push(emergencyContactPhone || null);
+            }
 
             if (updates.length === 0) {
                 return res.status(400).json({
@@ -95,7 +131,9 @@ router.put(
             const result = await query(
                 `UPDATE delivery_partners SET ${updates.join(', ')} 
         WHERE id = $${paramCount} 
-        RETURNING id, email, full_name, phone, vehicle_type, vehicle_number, status, rating, total_deliveries`,
+        RETURNING id, email, full_name, phone, vehicle_type, vehicle_number,
+        profile_photo_url, bio, address, emergency_contact_name, emergency_contact_phone,
+        status, rating, total_deliveries`,
                 values
             );
 
@@ -109,6 +147,33 @@ router.put(
         }
     }
 );
+
+/**
+ * DELETE /api/partner/profile
+ * Delete partner account
+ */
+router.delete('/profile', async (req, res, next) => {
+    try {
+        const result = await query(
+            'DELETE FROM delivery_partners WHERE id = $1 RETURNING id',
+            [req.user.id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Partner not found',
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Profile deleted successfully',
+        });
+    } catch (error) {
+        next(error);
+    }
+});
 
 /**
  * PUT /api/partner/status

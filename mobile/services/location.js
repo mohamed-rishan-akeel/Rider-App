@@ -1,6 +1,7 @@
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
 import { jobsAPI } from './api';
+import { isMockSession } from './storage';
 
 let locationSubscription = null;
 let currentJobId = null;
@@ -65,6 +66,12 @@ export const getCurrentLocation = async () => {
  */
 export const startLocationTracking = async (jobId) => {
     try {
+        if (await isMockSession()) {
+            currentJobId = jobId;
+            console.log('Mock location tracking started for job:', jobId);
+            return;
+        }
+
         // Stop any existing tracking
         await stopLocationTracking();
 
@@ -109,9 +116,9 @@ export const stopLocationTracking = async () => {
     if (locationSubscription) {
         locationSubscription.remove();
         locationSubscription = null;
-        currentJobId = null;
         console.log('Location tracking stopped');
     }
+    currentJobId = null;
 };
 
 /**

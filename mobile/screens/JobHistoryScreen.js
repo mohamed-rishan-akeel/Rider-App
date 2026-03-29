@@ -7,7 +7,10 @@ import {
     RefreshControl,
 } from 'react-native';
 import { jobsAPI } from '../services/api';
-import { colors, spacing, typography, shadows } from '../styles/theme';
+import { SurfaceCard, StatusBadge, SectionHeader, EmptyState } from '../components/Common';
+import { colors, spacing, typography } from '../styles/theme';
+
+const toneForStatus = (status) => (status === 'delivered' ? 'success' : 'warning');
 
 export default function JobHistoryScreen() {
     const [jobs, setJobs] = useState([]);
@@ -31,43 +34,63 @@ export default function JobHistoryScreen() {
     };
 
     const renderJob = ({ item }) => (
-        <View style={styles.jobCard}>
+        <SurfaceCard style={styles.jobCard}>
             <View style={styles.jobHeader}>
-                <Text style={styles.orderNumber}>{item.order_number}</Text>
-                <Text style={[styles.status, item.status === 'delivered' && styles.statusDelivered]}>
-                    {item.status.toUpperCase()}
-                </Text>
+                <View style={styles.headerCopy}>
+                    <Text style={styles.orderNumber}>{item.order_number}</Text>
+                    <Text style={styles.date}>
+                        {new Date(item.delivered_at || item.assigned_at).toLocaleDateString()}
+                    </Text>
+                </View>
+                <StatusBadge
+                    label={item.status.replace(/_/g, ' ').toUpperCase()}
+                    tone={toneForStatus(item.status)}
+                />
             </View>
 
-            <Text style={styles.address}>From: {item.pickup_address}</Text>
-            <Text style={styles.address}>To: {item.dropoff_address}</Text>
+            <Text style={styles.addressLabel}>Pickup</Text>
+            <Text style={styles.address}>{item.pickup_address}</Text>
+            <Text style={[styles.addressLabel, styles.addressGap]}>Dropoff</Text>
+            <Text style={styles.address}>{item.dropoff_address}</Text>
 
             <View style={styles.footer}>
                 <Text style={styles.payment}>${item.payment_amount.toFixed(2)}</Text>
-                <Text style={styles.date}>
-                    {new Date(item.delivered_at || item.assigned_at).toLocaleDateString()}
+                <Text style={styles.distance}>
+                    {item.distance_km ? `${item.distance_km.toFixed(1)} km` : 'Completed'}
                 </Text>
             </View>
-        </View>
+        </SurfaceCard>
     );
 
     return (
         <View style={styles.container}>
+            <View style={styles.header}>
+                <SectionHeader
+                    eyebrow="Archive"
+                    title="Delivery History"
+                    subtitle="Review previous completed and closed routes."
+                />
+            </View>
+
             <FlatList
                 data={jobs}
                 renderItem={renderJob}
                 keyExtractor={(item) => item.id.toString()}
                 contentContainerStyle={styles.listContent}
                 refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={() => {
-                        setRefreshing(true);
-                        loadHistory();
-                    }} />
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={() => {
+                            setRefreshing(true);
+                            loadHistory();
+                        }}
+                    />
                 }
                 ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>No delivery history yet</Text>
-                    </View>
+                    <EmptyState
+                        title={loading ? 'Loading history...' : 'No delivery history yet'}
+                        body="Completed deliveries will appear here once routes are closed."
+                    />
                 }
             />
         </View>
@@ -79,60 +102,59 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: colors.background,
     },
+    header: {
+        paddingHorizontal: spacing.lg,
+        paddingTop: spacing.lg,
+    },
     listContent: {
         padding: spacing.lg,
     },
     jobCard: {
-        backgroundColor: colors.surface,
-        borderRadius: 12,
-        padding: spacing.lg,
         marginBottom: spacing.md,
-        ...shadows.small,
     },
     jobHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: spacing.sm,
+        alignItems: 'flex-start',
+        gap: spacing.sm,
+        marginBottom: spacing.md,
+    },
+    headerCopy: {
+        flex: 1,
     },
     orderNumber: {
         ...typography.h3,
+        marginBottom: spacing.xs,
     },
-    status: {
+    date: {
+        ...typography.bodySmall,
+    },
+    addressLabel: {
         ...typography.caption,
-        fontWeight: '600',
+        fontWeight: '700',
         color: colors.textSecondary,
+        marginBottom: spacing.xs,
     },
-    statusDelivered: {
-        color: colors.secondary,
+    addressGap: {
+        marginTop: spacing.sm,
     },
     address: {
-        ...typography.bodySmall,
-        marginBottom: spacing.xs,
+        ...typography.body,
     },
     footer: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginTop: spacing.sm,
-        paddingTop: spacing.sm,
+        marginTop: spacing.md,
+        paddingTop: spacing.md,
         borderTopWidth: 1,
         borderTopColor: colors.border,
     },
     payment: {
         ...typography.body,
-        fontWeight: '600',
         color: colors.secondary,
+        fontWeight: '800',
     },
-    date: {
+    distance: {
         ...typography.bodySmall,
-        color: colors.textSecondary,
-    },
-    emptyContainer: {
-        padding: spacing.xl,
-        alignItems: 'center',
-    },
-    emptyText: {
-        ...typography.body,
-        color: colors.textSecondary,
     },
 });

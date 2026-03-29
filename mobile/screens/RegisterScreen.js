@@ -2,17 +2,16 @@ import React, { useState } from 'react';
 import {
     View,
     Text,
-    TextInput,
     StyleSheet,
     Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
 } from 'react-native';
-import { Button } from '../components/Common';
+import { Button, Input, SurfaceCard, StatusBadge } from '../components/Common';
 import { authAPI } from '../services/api';
 import { saveTokens, saveUserData } from '../services/storage';
-import { colors, spacing, typography } from '../styles/theme';
+import { colors, spacing, typography, radii } from '../styles/theme';
 
 export default function RegisterScreen({ navigation }) {
     const [formData, setFormData] = useState({
@@ -55,78 +54,73 @@ export default function RegisterScreen({ navigation }) {
             style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                <View style={styles.header}>
-                    <Text style={styles.title}>Create Account</Text>
-                    <Text style={styles.subtitle}>Join our delivery network</Text>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                <View style={styles.hero}>
+                    <StatusBadge label="New Partner" tone="warning" />
+                    <Text style={styles.title}>Create a driver profile that feels ready on day one.</Text>
+                    <Text style={styles.subtitle}>
+                        Set up your account, vehicle details, and secure credentials to join the delivery network.
+                    </Text>
                 </View>
 
-                <View style={styles.form}>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Full Name *"
+                <SurfaceCard style={styles.formCard}>
+                    <Text style={styles.formTitle}>Create Account</Text>
+                    <Text style={styles.formSubtitle}>Required fields are marked and saved securely.</Text>
+
+                    <Input
+                        label="Full Name"
+                        placeholder="Enter your full name"
                         value={formData.fullName}
                         onChangeText={(text) => setFormData({ ...formData, fullName: text })}
-                        placeholderTextColor={colors.textSecondary}
                     />
-
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Email *"
+                    <Input
+                        label="Email"
+                        placeholder="partner@delivery.com"
                         value={formData.email}
                         onChangeText={(text) => setFormData({ ...formData, email: text })}
                         keyboardType="email-address"
                         autoCapitalize="none"
-                        placeholderTextColor={colors.textSecondary}
                     />
-
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Phone *"
+                    <Input
+                        label="Phone"
+                        placeholder="Enter your phone number"
                         value={formData.phone}
                         onChangeText={(text) => setFormData({ ...formData, phone: text })}
                         keyboardType="phone-pad"
-                        placeholderTextColor={colors.textSecondary}
                     />
-
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Password *"
+                    <Input
+                        label="Password"
+                        placeholder="Create a password"
                         value={formData.password}
                         onChangeText={(text) => setFormData({ ...formData, password: text })}
                         secureTextEntry
-                        placeholderTextColor={colors.textSecondary}
                     />
-
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Vehicle Type (e.g., Motorcycle, Car)"
+                    <Input
+                        label="Vehicle Type"
+                        placeholder="Motorcycle, car, bicycle"
                         value={formData.vehicleType}
                         onChangeText={(text) => setFormData({ ...formData, vehicleType: text })}
-                        placeholderTextColor={colors.textSecondary}
                     />
-
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Vehicle Number"
+                    <Input
+                        label="Vehicle Number"
+                        placeholder="Registration or identifier"
                         value={formData.vehicleNumber}
                         onChangeText={(text) => setFormData({ ...formData, vehicleNumber: text })}
-                        placeholderTextColor={colors.textSecondary}
                     />
 
                     <Button
                         title="Create Account"
                         onPress={handleRegister}
                         loading={loading}
-                        style={styles.registerButton}
+                        style={styles.primaryAction}
                     />
 
                     <Button
-                        title="Already have an account? Sign In"
+                        title="Back to Sign In"
                         onPress={() => navigation.goBack()}
                         variant="outline"
                     />
-                </View>
+                </SurfaceCard>
             </ScrollView>
         </KeyboardAvoidingView>
     );
@@ -140,34 +134,36 @@ const styles = StyleSheet.create({
     scrollContent: {
         flexGrow: 1,
         padding: spacing.lg,
-        paddingTop: spacing.xl,
     },
-    header: {
-        alignItems: 'center',
-        marginBottom: spacing.xl,
+    hero: {
+        backgroundColor: colors.primaryDark,
+        borderRadius: radii.xl,
+        padding: spacing.xl,
+        marginBottom: spacing.lg,
     },
     title: {
         ...typography.h1,
+        color: colors.surface,
+        marginTop: spacing.md,
         marginBottom: spacing.sm,
     },
     subtitle: {
         ...typography.body,
-        color: colors.textSecondary,
+        color: 'rgba(255,255,255,0.82)',
     },
-    form: {
-        width: '100%',
+    formCard: {
+        padding: spacing.lg,
+        marginBottom: spacing.lg,
     },
-    input: {
-        borderWidth: 1,
-        borderColor: colors.border,
-        borderRadius: 8,
-        paddingVertical: spacing.md,
-        paddingHorizontal: spacing.md,
-        marginBottom: spacing.md,
-        ...typography.body,
-        backgroundColor: colors.surface,
+    formTitle: {
+        ...typography.h2,
+        marginBottom: spacing.xs,
     },
-    registerButton: {
-        marginBottom: spacing.md,
+    formSubtitle: {
+        ...typography.bodySmall,
+        marginBottom: spacing.lg,
+    },
+    primaryAction: {
+        marginBottom: spacing.sm,
     },
 });

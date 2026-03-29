@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
     View,
     Text,
-    TextInput,
     StyleSheet,
     Alert,
     ScrollView,
@@ -10,10 +9,10 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import SignatureCanvas from 'react-native-signature-canvas';
-import { Button } from '../components/Common';
+import { Button, Input, SurfaceCard, SectionHeader, StatusBadge } from '../components/Common';
 import { jobsAPI } from '../services/api';
 import { getCurrentLocation } from '../services/location';
-import { colors, spacing, typography, shadows } from '../styles/theme';
+import { colors, spacing, typography } from '../styles/theme';
 
 export default function ProofOfDeliveryScreen({ route, navigation }) {
     const { jobId } = route.params;
@@ -57,7 +56,7 @@ export default function ProofOfDeliveryScreen({ route, navigation }) {
             const location = await getCurrentLocation();
 
             const proofData = {
-                photoUrl: photoUri, // In production, upload to cloud storage first
+                photoUrl: photoUri,
                 signatureData: signature,
                 recipientName,
                 notes,
@@ -79,101 +78,73 @@ export default function ProofOfDeliveryScreen({ route, navigation }) {
 
     if (showSignaturePad) {
         return (
-            <View style={styles.container}>
-                <Text style={styles.title}>Customer Signature</Text>
+            <View style={styles.signatureContainer}>
+                <Text style={styles.signatureTitle}>Customer Signature</Text>
                 <SignatureCanvas
                     onOK={handleSignature}
                     onEmpty={() => Alert.alert('Error', 'Please provide a signature')}
                     descriptionText="Sign here"
                     clearText="Clear"
                     confirmText="Save"
-                    webStyle={`.m-signature-pad {box-shadow: none; border: 1px solid #e5e7eb;}`}
+                    webStyle={`.m-signature-pad {box-shadow: none; border: 1px solid #d7dfec;}`}
                 />
-                <Button
-                    title="Cancel"
-                    onPress={() => setShowSignaturePad(false)}
-                    variant="outline"
-                    style={styles.cancelButton}
-                />
+                <Button title="Cancel" onPress={() => setShowSignaturePad(false)} variant="outline" style={styles.signatureCancel} />
             </View>
         );
     }
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-            <Text style={styles.title}>Proof of Delivery</Text>
+        <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <SectionHeader
+                eyebrow="Closeout"
+                title="Proof of Delivery"
+                subtitle="Capture final evidence before marking the route complete."
+                right={<StatusBadge label={`Job #${jobId}`} tone="info" />}
+            />
 
-            <View style={styles.section}>
-                <Text style={styles.label}>Delivery Photo</Text>
+            <SurfaceCard style={styles.sectionCard}>
+                <Text style={styles.cardTitle}>Delivery Photo</Text>
                 {photoUri ? (
-                    <View>
+                    <>
                         <Image source={{ uri: photoUri }} style={styles.photo} />
-                        <Button
-                            title="Retake Photo"
-                            onPress={handleTakePhoto}
-                            variant="outline"
-                            style={styles.retakeButton}
-                        />
-                    </View>
+                        <Button title="Retake Photo" onPress={handleTakePhoto} variant="outline" />
+                    </>
                 ) : (
                     <Button title="Take Photo" onPress={handleTakePhoto} />
                 )}
-            </View>
+            </SurfaceCard>
 
-            <View style={styles.section}>
-                <Text style={styles.label}>Customer Signature</Text>
+            <SurfaceCard style={styles.sectionCard}>
+                <Text style={styles.cardTitle}>Customer Signature</Text>
                 {signature ? (
-                    <View>
-                        <Image
-                            source={{ uri: signature }}
-                            style={styles.signature}
-                            resizeMode="contain"
-                        />
-                        <Button
-                            title="Retake Signature"
-                            onPress={() => setShowSignaturePad(true)}
-                            variant="outline"
-                            style={styles.retakeButton}
-                        />
-                    </View>
+                    <>
+                        <Image source={{ uri: signature }} style={styles.signaturePreview} resizeMode="contain" />
+                        <Button title="Retake Signature" onPress={() => setShowSignaturePad(true)} variant="outline" />
+                    </>
                 ) : (
-                    <Button
-                        title="Capture Signature"
-                        onPress={() => setShowSignaturePad(true)}
-                    />
+                    <Button title="Capture Signature" onPress={() => setShowSignaturePad(true)} />
                 )}
-            </View>
+            </SurfaceCard>
 
-            <View style={styles.section}>
-                <Text style={styles.label}>Recipient Name (Optional)</Text>
-                <TextInput
-                    style={styles.input}
+            <SurfaceCard style={styles.sectionCard}>
+                <Input
+                    label="Recipient Name"
                     placeholder="Who received the delivery?"
                     value={recipientName}
                     onChangeText={setRecipientName}
-                    placeholderTextColor={colors.textSecondary}
                 />
-            </View>
-
-            <View style={styles.section}>
-                <Text style={styles.label}>Notes (Optional)</Text>
-                <TextInput
-                    style={[styles.input, styles.textArea]}
-                    placeholder="Any additional notes..."
+                <Input
+                    label="Notes"
+                    placeholder="Any additional delivery notes"
                     value={notes}
                     onChangeText={setNotes}
                     multiline
                     numberOfLines={4}
-                    placeholderTextColor={colors.textSecondary}
+                    style={styles.notesField}
                 />
-            </View>
+            </SurfaceCard>
 
-            <Button
-                title="Complete Delivery"
-                onPress={handleSubmit}
-                loading={loading}
-                style={styles.submitButton}
-            />
+            <Button title="Complete Delivery" onPress={handleSubmit} loading={loading} />
         </ScrollView>
     );
 }
@@ -185,53 +156,43 @@ const styles = StyleSheet.create({
     },
     content: {
         padding: spacing.lg,
+        paddingBottom: spacing.xl,
     },
-    title: {
-        ...typography.h2,
-        marginBottom: spacing.lg,
+    sectionCard: {
+        marginBottom: spacing.md,
     },
-    section: {
-        marginBottom: spacing.lg,
-    },
-    label: {
+    cardTitle: {
         ...typography.h3,
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md,
     },
     photo: {
         width: '100%',
-        height: 200,
-        borderRadius: 8,
-        marginBottom: spacing.sm,
+        height: 220,
+        borderRadius: 16,
+        marginBottom: spacing.md,
     },
-    signature: {
+    signaturePreview: {
         width: '100%',
-        height: 150,
+        height: 160,
         borderWidth: 1,
         borderColor: colors.border,
-        borderRadius: 8,
-        marginBottom: spacing.sm,
+        borderRadius: 16,
         backgroundColor: colors.surface,
+        marginBottom: spacing.md,
     },
-    retakeButton: {
-        marginTop: 0,
+    notesField: {
+        marginBottom: 0,
     },
-    input: {
-        borderWidth: 1,
-        borderColor: colors.border,
-        borderRadius: 8,
-        paddingVertical: spacing.md,
-        paddingHorizontal: spacing.md,
-        ...typography.body,
-        backgroundColor: colors.surface,
+    signatureContainer: {
+        flex: 1,
+        backgroundColor: colors.background,
+        padding: spacing.lg,
     },
-    textArea: {
-        height: 100,
-        textAlignVertical: 'top',
+    signatureTitle: {
+        ...typography.h2,
+        marginBottom: spacing.md,
     },
-    submitButton: {
-        marginTop: spacing.md,
-    },
-    cancelButton: {
-        margin: spacing.lg,
+    signatureCancel: {
+        marginTop: spacing.lg,
     },
 });
