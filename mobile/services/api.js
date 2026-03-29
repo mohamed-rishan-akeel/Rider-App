@@ -387,10 +387,16 @@ export const jobsAPI = {
         try {
             return await api.put(`/jobs/${jobId}/status`, { status: 'accepted' });
         } catch (error) {
-            const updated = MOCK_ASSIGNED_JOBS.data.data.find((job) => job.id === jobId);
+            const updatedIndex = MOCK_ASSIGNED_JOBS.data.data.findIndex((job) => job.id === jobId);
+            const updated =
+                updatedIndex >= 0 ? MOCK_ASSIGNED_JOBS.data.data[updatedIndex] : null;
             if (updated) {
                 updated.status = 'accepted';
                 updated.accepted_at = new Date().toISOString();
+                MOCK_ACTIVE_JOB.data.data = {
+                    ...updated,
+                };
+                MOCK_ASSIGNED_JOBS.data.data.splice(updatedIndex, 1);
             }
             return {
                 data: {

@@ -1,37 +1,21 @@
-import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
-import {
-    Button,
-    SectionHeader,
-    StatusBadge,
-} from '../components/Common';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, Text } from 'react-native';
+import type { StackScreenProps } from '@react-navigation/stack';
+import { SectionHeader, StatusBadge } from '../components/Common';
+import DeliveryActionControls from '../components/DeliveryActionControls';
 import DeliveryDetailSection from '../components/DeliveryDetailSection';
-import {
-    acceptAssignedDelivery,
-    rejectAssignedDelivery,
-    selectAssignedDeliveriesUpdating,
-} from '../store/slices/assignedDeliveriesSlice';
 import { colors, spacing, typography } from '../styles/theme';
 import type { Delivery, DeliveryStatus } from '../types/delivery';
+import type { RootStackParamList } from '../types/navigation';
 import {
     DeliveryWorkflowAction,
-    DeliveryWorkflowStatus,
-    canPerformAction,
     isWorkflowStatus,
 } from '../utils/deliveryWorkflow';
 
-type DeliveryDetailsScreenProps = {
-    route: {
-        params: {
-            delivery: Delivery;
-        };
-    };
-    navigation: {
-        goBack: () => void;
-        navigate: (screen: string, params?: Record<string, unknown>) => void;
-    };
-};
+type DeliveryDetailsScreenProps = StackScreenProps<
+    RootStackParamList,
+    'DeliveryDetails'
+>;
 
 const formatStatus = (status: DeliveryStatus) =>
     status.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -55,49 +39,8 @@ export default function DeliveryDetailsScreen({
     route,
     navigation,
 }: DeliveryDetailsScreenProps) {
-    const dispatch = useDispatch();
-    const isUpdating = useSelector(selectAssignedDeliveriesUpdating);
-    const { delivery } = route.params;
-    const workflowStatus = isWorkflowStatus(delivery.status)
-        ? delivery.status
-        : null;
-    const canAccept = workflowStatus
-        ? canPerformAction(workflowStatus, DeliveryWorkflowAction.ACCEPT)
-        : false;
-    const canReject = workflowStatus
-        ? canPerformAction(workflowStatus, DeliveryWorkflowAction.REJECT)
-        : false;
-
-    const handleAccept = async () => {
-        const result = await dispatch(acceptAssignedDelivery(delivery.id) as any);
-        if (acceptAssignedDelivery.fulfilled.match(result)) {
-            navigation.navigate('ActiveDelivery', {
-                job: { ...delivery, status: DeliveryWorkflowStatus.ACCEPTED },
-            });
-        }
-    };
-
-    const handleReject = () => {
-        Alert.alert(
-            'Reject Delivery',
-            `Reject ${delivery.orderNumber} and return it to dispatch?`,
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Reject',
-                    style: 'destructive',
-                    onPress: async () => {
-                        const result = await dispatch(
-                            rejectAssignedDelivery(delivery.id) as any
-                        );
-                        if (rejectAssignedDelivery.fulfilled.match(result)) {
-                            navigation.goBack();
-                        }
-                    },
-                },
-            ]
-        );
-    };
+    const [delivery, setDelivery] = useState<Delivery>(route.params.delivery);
+    const workflowStatus = isWorkflowStatus(delivery.status) ? delivery.status : null;
 
     return (
         <ScrollView
@@ -176,28 +119,30 @@ export default function DeliveryDetailsScreen({
                 ) : null}
             </DeliveryDetailSection>
 
-            {canAccept || canReject ? (
-                <View style={styles.actionRow}>
-                    {canReject ? (
-                        <Button
-                            title="Reject"
-                            variant="outline"
-                            onPress={handleReject}
-                            disabled={isUpdating}
-                            style={styles.actionButton}
-                            textStyle={styles.buttonText}
-                        />
-                    ) : null}
-                    {canAccept ? (
-                        <Button
-                            title="Accept"
-                            onPress={handleAccept}
-                            disabled={isUpdating}
-                            style={styles.actionButton}
-                            textStyle={styles.buttonText}
-                        />
-                    ) : null}
-                </View>
+            {workflowStatus ? (
+                <DeliveryActionControls
+                    delivery={delivery}
+                    onDeliveryChange={setDelivery}
+                    onActionSuccess={({ action, delivery: nextDelivery }) => {
+                        if (action === DeliveryWorkflowAction.REJECT) {
+                            navigation.goBack();
+                            return;
+                        }
+
+                        if (action === DeliveryWorkflowAction.ACCEPT) {
+                            navigation.navigate('ActiveDelivery', {
+                                job: nextDelivery,
+                            });
+                            return;
+                        }
+
+                        if (action === DeliveryWorkflowAction.COMPLETE_DELIVERY) {
+                            navigation.navigate('ProofOfDelivery', {
+                                jobId: nextDelivery.id,
+                            });
+                        }
+                    }}
+                />
             ) : null}
         </ScrollView>
     );
@@ -224,13 +169,5 @@ const styles = StyleSheet.create({
         ...typography.bodySmall,
         color: colors.primary,
         fontWeight: '700',
-    },
-    actionRow: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        marginTop: spacing.sm,
-    },
-    actionButton: {
-        flex: 1,
     },
 });
