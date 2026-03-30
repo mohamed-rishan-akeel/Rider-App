@@ -19,6 +19,18 @@ export type AppLocation = {
     timestamp: number;
 };
 
+export type LocationTrackingState = {
+    jobId: string | number | null;
+    intervalMs: number | null;
+    isTracking: boolean;
+    isPaused: boolean;
+    lastError: string | null;
+};
+
+export type LocationTrackingOptions = {
+    intervalMs?: number;
+};
+
 export type LocationServiceError = Error & {
     code: LocationErrorCode;
     cause?: unknown;
@@ -32,9 +44,7 @@ export function createLocationError(
     cause?: unknown
 ): LocationServiceError;
 
-export function normalizeLocationError(
-    error: unknown
-): LocationServiceError;
+export function normalizeLocationError(error: unknown): LocationServiceError;
 
 export function getLocationErrorMessage(error: unknown): string;
 
@@ -46,9 +56,14 @@ export function requestLocationPermission(): Promise<LocationPermissionResult>;
 
 export function getCurrentLocation(): Promise<AppLocation>;
 
-export function startLocationTracking(jobId: string | number): Promise<void>;
+export function getLocationTrackingState(): LocationTrackingState;
 
-export function stopLocationTracking(): Promise<void>;
+export function startLocationTracking(
+    jobId: string | number,
+    options?: LocationTrackingOptions
+): Promise<LocationTrackingState>;
+
+export function stopLocationTracking(): Promise<LocationTrackingState>;
 
 export function calculateDistance(
     lat1: number,

@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     ScrollView,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import {
     SurfaceCard,
     StatusBadge,
@@ -13,9 +13,11 @@ import {
 } from '../components/Common';
 import DeliveryActionControls from '../components/DeliveryActionControls';
 import DeliveryStatusTimeline from '../components/DeliveryStatusTimeline';
+import { useDeliveryRoute } from '../hooks/useDeliveryRoute';
+import { useLiveLocationTracking } from '../hooks/useLiveLocationTracking';
 import {
-    startLocationTracking,
-    stopLocationTracking,
+    getCurrentLocation,
+    getLocationErrorMessage,
 } from '../services/location';
 import { colors, spacing, typography, radii } from '../styles/theme';
 
@@ -32,18 +34,189 @@ const toneForStatus = (status) => {
     return 'warning';
 };
 
-export default function ActiveDeliveryScreen({ route, navigation }) {
-    const [job, setJob] = useState(route.params?.job || null);
+const toCoordinate = (latitude, longitude) => {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return null;
+    }
+
+    return {
+        latitude: lat,
+        longitude: lng,
+    };
+};
+
+const formatStatusLabel = (status) =>
+    (status || '').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const formatDistance = (distanceKm) => {
+    if (distanceKm === null || distanceKm === undefined) {
+        return 'Route pending';
+    }
+
+    if (distanceKm < 1) {
+        return `${Math.round(distanceKm * 1000)} m`;
+    }
+
+    return `${distanceKm.toFixed(1)} km`;
+};
+
+const buildMapRegion = (coordinates) => {
+    const points = coordinates.filter(Boolean);
+
+    if (!points.length) {
+        return {
+            latitude: 6.9271,
+            longitude: 79.8612,
+            latitudeDelta: 0.12,
+            longitudeDelta: 0.12,
+        };
+    }
+
+    const latitudes = points.map((point) => point.latitude);
+    const longitudes = points.map((point) => point.longitude);
+    const minLatitude = Math.min(...latitudes);
+    const maxLatitude = Math.max(...latitudes);
+    const minLongitude = Math.min(...longitudes);
+    const maxLongitude = Math.max(...longitudes);
+
+    return {
+        latitude: (minLatitude + maxLatitude) / 2,
+        longitude: (minLongitude + maxLongitude) / 2,
+        latitudeDelta: Math.max(0.02, (maxLatitude - minLatitude) * 1.8),
+        longitudeDelta: Math.max(0.02, (maxLongitude - minLongitude) * 1.8),
+    };
+};
+
+export default function ActiveDeliveryScreen({ route: navigationRoute, navigation }) {
+    const mapRef = useRef(null);
+    const [job, setJob] = useState(navigationRoute.params?.job || null);
+    const [driverLocation, setDriverLocation] = useState(null);
+    const [routeError, setRouteError] = useState(null);
+    const [isResolvingRoute, setIsResolvingRoute] = useState(true);
+    const { isTracking, isPaused, trackingError, stopTracking } =
+        useLiveLocationTracking({
+            jobId: job?.id,
+            status: job?.status,
+            intervalMs: 7000,
+        });
 
     useEffect(() => {
-        if (job) {
-            startLocationTracking(job.id);
+        if (!job) {
+            return undefined;
         }
 
-        return () => {
-            stopLocationTracking();
+        let isMounted = true;
+
+        const loadDriverLocation = async () => {
+            try {
+                const location = await getCurrentLocation();
+
+                if (!isMounted) {
+                    return;
+                }
+
+                setDriverLocation(location);
+                setRouteError(null);
+            } catch (error) {
+                if (!isMounted) {
+                    return;
+                }
+
+                setRouteError(getLocationErrorMessage(error));
+            } finally {
+                if (isMounted) {
+                    setIsResolvingRoute(false);
+                }
+            }
         };
-    }, [job]);
+
+        setIsResolvingRoute(true);
+        void loadDriverLocation();
+
+        const intervalId = setInterval(() => {
+            void loadDriverLocation();
+        }, 10000);
+
+        return () => {
+            isMounted = false;
+            clearInterval(intervalId);
+        };
+    }, [job?.id]);
+
+    const pickupCoordinate = useMemo(
+        () => toCoordinate(job?.pickupLatitude ?? job?.pickup_latitude, job?.pickupLongitude ?? job?.pickup_longitude),
+        [job]
+    );
+    const dropoffCoordinate = useMemo(
+        () => toCoordinate(job?.dropoffLatitude ?? job?.dropoff_latitude, job?.dropoffLongitude ?? job?.dropoff_longitude),
+        [job]
+    );
+    const driverCoordinate = useMemo(
+        () =>
+            driverLocation
+                ? {
+                    latitude: driverLocation.latitude,
+                    longitude: driverLocation.longitude,
+                }
+                : null,
+        [driverLocation]
+    );
+
+    const nextStopCoordinate = useMemo(() => {
+        if (['accepted', 'arrived_at_pickup'].includes(job?.status)) {
+            return pickupCoordinate;
+        }
+
+        if (['picked_up', 'in_transit', 'arrived_at_dropoff', 'delivered'].includes(job?.status)) {
+            return dropoffCoordinate;
+        }
+
+        return pickupCoordinate || dropoffCoordinate;
+    }, [dropoffCoordinate, job?.status, pickupCoordinate]);
+
+    const {
+        route: deliveryRoute,
+        isLoading: isLoadingRoute,
+        error: routeServiceError,
+    } = useDeliveryRoute({
+        origin: driverCoordinate,
+        destination: nextStopCoordinate,
+        enabled: Boolean(driverCoordinate && nextStopCoordinate),
+    });
+
+    const routeCoordinates = useMemo(() => {
+        if (deliveryRoute?.coordinates?.length) {
+            return deliveryRoute.coordinates;
+        }
+
+        if (driverCoordinate && nextStopCoordinate) {
+            return [driverCoordinate, nextStopCoordinate];
+        }
+
+        return [];
+    }, [deliveryRoute?.coordinates, driverCoordinate, nextStopCoordinate]);
+
+    const distanceRemainingKm = deliveryRoute?.distanceKm ?? null;
+    const etaMinutes = deliveryRoute?.etaMinutes ?? null;
+
+    useEffect(() => {
+        if (!mapRef.current || routeCoordinates.length < 2) {
+            return;
+        }
+
+        mapRef.current.fitToCoordinates(routeCoordinates, {
+            animated: true,
+            edgePadding: {
+                top: 100,
+                right: 60,
+                bottom: 200,
+                left: 60,
+            },
+        });
+    }, [routeCoordinates]);
 
     if (!job) {
         return (
@@ -53,33 +226,54 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
         );
     }
 
+    const routeUnavailable =
+        !deliveryRoute?.coordinates?.length || routeCoordinates.length < 2;
+    const mapRegion = buildMapRegion([
+        driverCoordinate,
+        pickupCoordinate,
+        dropoffCoordinate,
+    ]);
+
     return (
         <View style={styles.container}>
             <MapView
+                ref={mapRef}
                 style={styles.map}
-                initialRegion={{
-                    latitude: job.pickupLatitude ?? job.pickup_latitude,
-                    longitude: job.pickupLongitude ?? job.pickup_longitude,
-                    latitudeDelta: 0.05,
-                    longitudeDelta: 0.05,
-                }}
+                initialRegion={mapRegion}
             >
-                <Marker
-                    coordinate={{
-                        latitude: job.pickupLatitude ?? job.pickup_latitude,
-                        longitude: job.pickupLongitude ?? job.pickup_longitude,
-                    }}
-                    title="Pickup"
-                    pinColor={colors.primary}
-                />
-                <Marker
-                    coordinate={{
-                        latitude: job.dropoffLatitude ?? job.dropoff_latitude,
-                        longitude: job.dropoffLongitude ?? job.dropoff_longitude,
-                    }}
-                    title="Dropoff"
-                    pinColor={colors.secondary}
-                />
+                {driverCoordinate ? (
+                    <Marker
+                        coordinate={driverCoordinate}
+                        title="Your Location"
+                        description="Live driver position"
+                        pinColor={colors.accent}
+                    />
+                ) : null}
+
+                {pickupCoordinate ? (
+                    <Marker
+                        coordinate={pickupCoordinate}
+                        title="Pickup"
+                        pinColor={colors.primary}
+                    />
+                ) : null}
+
+                {dropoffCoordinate ? (
+                    <Marker
+                        coordinate={dropoffCoordinate}
+                        title="Drop-off"
+                        pinColor={colors.secondary}
+                    />
+                ) : null}
+
+                {routeCoordinates.length >= 2 ? (
+                    <Polyline
+                        coordinates={routeCoordinates}
+                        strokeColor={colors.primary}
+                        strokeWidth={5}
+                        geodesic
+                    />
+                ) : null}
             </MapView>
 
             <ScrollView
@@ -88,16 +282,54 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
                 showsVerticalScrollIndicator={false}
             >
                 <SectionHeader
-                    eyebrow="Live Route"
+                    eyebrow="Active Delivery"
                     title={job.orderNumber ?? job.order_number}
-                    subtitle="Track the current stop, customer details, and route status."
+                    subtitle="Monitor your live route, progress, and next stop."
                     right={
                         <StatusBadge
-                            label={(job.status || '').replace(/_/g, ' ')}
+                            label={formatStatusLabel(job.status)}
                             tone={toneForStatus(job.status)}
                         />
                     }
                 />
+
+                <View style={styles.metricGrid}>
+                    <SurfaceCard style={styles.metricCard}>
+                        <Text style={styles.metricLabel}>ETA</Text>
+                        <Text style={styles.metricValue}>
+                            {etaMinutes ? `${etaMinutes} min` : isLoadingRoute ? 'Loading' : 'Calculating'}
+                        </Text>
+                    </SurfaceCard>
+
+                    <SurfaceCard style={styles.metricCard}>
+                        <Text style={styles.metricLabel}>Distance Left</Text>
+                        <Text style={styles.metricValue}>
+                            {formatDistance(distanceRemainingKm)}
+                        </Text>
+                    </SurfaceCard>
+
+                    <SurfaceCard style={styles.metricCardWide}>
+                        <Text style={styles.metricLabel}>Driver Location</Text>
+                        <Text style={styles.metricValueSmall}>
+                            {driverCoordinate
+                                ? `${driverCoordinate.latitude.toFixed(5)}, ${driverCoordinate.longitude.toFixed(5)}`
+                                : isResolvingRoute
+                                    ? 'Resolving GPS...'
+                                    : 'Unavailable'}
+                        </Text>
+                    </SurfaceCard>
+                </View>
+
+                {routeUnavailable ? (
+                    <SurfaceCard style={styles.fallbackCard}>
+                        <Text style={styles.cardTitle}>Route Unavailable</Text>
+                        <Text style={styles.body}>
+                            {routeServiceError ||
+                                routeError ||
+                                'We could not build a live route right now. Pickup and drop-off markers are still shown on the map.'}
+                        </Text>
+                    </SurfaceCard>
+                ) : null}
 
                 <SurfaceCard style={styles.detailCard}>
                     <Text style={styles.cardTitle}>Pickup</Text>
@@ -117,7 +349,7 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
                 </SurfaceCard>
 
                 <SurfaceCard style={styles.detailCard}>
-                    <Text style={styles.cardTitle}>Dropoff</Text>
+                    <Text style={styles.cardTitle}>Drop-off</Text>
                     <Text style={styles.address}>
                         {job.dropoffAddress ?? job.dropoff_address}
                     </Text>
@@ -127,6 +359,20 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
                     <Text style={styles.contact}>
                         Phone: {job.customerPhone ?? job.customer_phone}
                     </Text>
+                </SurfaceCard>
+
+                <SurfaceCard style={styles.detailCard}>
+                    <Text style={styles.cardTitle}>Live Tracking</Text>
+                    <Text style={styles.body}>
+                        {isTracking
+                            ? 'Driver location is being sent to the backend every 7 seconds.'
+                            : isPaused
+                                ? 'Tracking is paused while the app is in the background.'
+                                : 'Tracking will start automatically when this delivery is in progress.'}
+                    </Text>
+                    {trackingError ? (
+                        <Text style={styles.trackingError}>{trackingError}</Text>
+                    ) : null}
                 </SurfaceCard>
 
                 {job.itemSummary || job.items_description ? (
@@ -154,7 +400,7 @@ export default function ActiveDeliveryScreen({ route, navigation }) {
                     onDeliveryChange={setJob}
                     onActionSuccess={({ delivery: nextDelivery }) => {
                         if (nextDelivery.status === 'delivered') {
-                            stopLocationTracking();
+                            void stopTracking();
                             navigation.navigate('ProofOfDelivery', {
                                 jobId: nextDelivery.id,
                             });
@@ -181,7 +427,7 @@ const styles = StyleSheet.create({
         ...typography.body,
     },
     map: {
-        height: 280,
+        height: 320,
     },
     sheet: {
         flex: 1,
@@ -193,6 +439,41 @@ const styles = StyleSheet.create({
     sheetContent: {
         padding: spacing.lg,
         paddingBottom: spacing.xl,
+    },
+    metricGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.sm,
+        marginBottom: spacing.md,
+    },
+    metricCard: {
+        flexGrow: 1,
+        flexBasis: '47%',
+        minWidth: 140,
+    },
+    metricCardWide: {
+        width: '100%',
+    },
+    metricLabel: {
+        ...typography.caption,
+        color: colors.textMuted,
+        textTransform: 'uppercase',
+        fontWeight: '700',
+        marginBottom: spacing.xs,
+    },
+    metricValue: {
+        ...typography.h2,
+        color: colors.text,
+    },
+    metricValueSmall: {
+        ...typography.body,
+        color: colors.text,
+    },
+    fallbackCard: {
+        marginBottom: spacing.md,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        backgroundColor: colors.surfaceMuted,
     },
     detailCard: {
         marginBottom: spacing.md,
@@ -210,5 +491,10 @@ const styles = StyleSheet.create({
     },
     body: {
         ...typography.body,
+    },
+    trackingError: {
+        ...typography.bodySmall,
+        color: colors.danger,
+        marginTop: spacing.sm,
     },
 });

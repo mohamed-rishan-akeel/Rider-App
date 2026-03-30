@@ -1,10 +1,23 @@
 import * as Location from 'expo-location';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { jobsAPI } from './api';
 import { isMockSession } from './storage';
 
-let locationSubscription = null;
+let trackingTimer = null;
+let appStateSubscription = null;
 let currentJobId = null;
+let currentIntervalMs = 7000;
+let trackingPaused = false;
+let trackingInFlight = false;
+let lastTrackingError = null;
+
+const SRI_LANKA_MOCK_LOCATION = {
+    latitude: 6.9077,
+    longitude: 79.8673,
+    accuracy: 12,
+    speed: 0,
+    heading: null,
+};
 
 export const LOCATION_ERROR_CODES = {
     PERMISSION_DENIED: 'PERMISSION_DENIED',
@@ -30,6 +43,41 @@ const mapCoordsToLocation = (location) => ({
         typeof location.timestamp === 'number' ? location.timestamp : Date.now(),
 });
 
+const buildMockLocation = () => ({
+    ...SRI_LANKA_MOCK_LOCATION,
+    timestamp: Date.now(),
+});
+
+const clampTrackingInterval = (intervalMs) => {
+    if (!Number.isFinite(intervalMs)) {
+        return 7000;
+    }
+
+    return Math.min(10000, Math.max(5000, intervalMs));
+};
+
+const clearTrackingTimer = () => {
+    if (trackingTimer) {
+        clearTimeout(trackingTimer);
+        trackingTimer = null;
+    }
+};
+
+const removeAppStateListener = () => {
+    if (appStateSubscription) {
+        appStateSubscription.remove();
+        appStateSubscription = null;
+    }
+};
+
+export const getLocationTrackingState = () => ({
+    jobId: currentJobId,
+    intervalMs: currentJobId ? currentIntervalMs : null,
+    isTracking: Boolean(currentJobId) && !trackingPaused,
+    isPaused: Boolean(currentJobId) && trackingPaused,
+    lastError: lastTrackingError,
+});
+
 export const createLocationError = (code, message, cause) => {
     const error = new Error(message);
     error.code = code;
@@ -46,10 +94,7 @@ export const normalizeLocationError = (error) => {
 
     const message = error?.message || 'Unable to access location';
 
-    if (
-        /permission/i.test(message) &&
-        /denied|granted/i.test(message)
-    ) {
+    if (/permission/i.test(message) && /denied|granted/i.test(message)) {
         return createLocationError(
             LOCATION_ERROR_CODES.PERMISSION_DENIED,
             'Location permission was denied.',
@@ -73,11 +118,7 @@ export const normalizeLocationError = (error) => {
         );
     }
 
-    return createLocationError(
-        LOCATION_ERROR_CODES.UNKNOWN,
-        message,
-        error
-    );
+    return createLocationError(LOCATION_ERROR_CODES.UNKNOWN, message, error);
 };
 
 export const getLocationErrorMessage = (error) =>
@@ -145,6 +186,10 @@ const ensureForegroundLocationPermission = async () => {
 
 export const getCurrentLocation = async () => {
     try {
+        if (await isMockSession()) {
+            return buildMockLocation();
+        }
+
         await ensureForegroundLocationPermission();
 
         const location = await Location.getCurrentPositionAsync({
@@ -157,47 +202,116 @@ export const getCurrentLocation = async () => {
     }
 };
 
-export const startLocationTracking = async (jobId) => {
-    try {
-        if (await isMockSession()) {
-            currentJobId = jobId;
-            console.log('Mock location tracking started for job:', jobId);
-            return;
-        }
+const scheduleNextTrackingTick = (delayMs = currentIntervalMs) => {
+    clearTrackingTimer();
 
+    if (!currentJobId || trackingPaused) {
+        return;
+    }
+
+    trackingTimer = setTimeout(() => {
+        void sendTrackedLocation();
+    }, delayMs);
+};
+
+const handleAppStateChange = (nextAppState) => {
+    if (!currentJobId) {
+        return;
+    }
+
+    if (nextAppState === 'active') {
+        trackingPaused = false;
+        scheduleNextTrackingTick(0);
+        return;
+    }
+
+    trackingPaused = true;
+    clearTrackingTimer();
+};
+
+const ensureAppStateSubscription = () => {
+    if (Platform.OS === 'web' || appStateSubscription) {
+        return;
+    }
+
+    appStateSubscription = AppState.addEventListener(
+        'change',
+        handleAppStateChange
+    );
+};
+
+const sendTrackedLocation = async () => {
+    if (!currentJobId || trackingPaused || trackingInFlight) {
+        return;
+    }
+
+    trackingInFlight = true;
+
+    try {
+        const location = await getCurrentLocation();
+        await jobsAPI.addLocation(currentJobId, location);
+        lastTrackingError = null;
+    } catch (error) {
+        lastTrackingError = getLocationErrorMessage(error);
+        console.error('Error sending location update:', lastTrackingError);
+    } finally {
+        trackingInFlight = false;
+
+        if (currentJobId && !trackingPaused) {
+            scheduleNextTrackingTick();
+        }
+    }
+};
+
+export const startLocationTracking = async (jobId, options = {}) => {
+    const intervalMs = clampTrackingInterval(options.intervalMs ?? 7000);
+
+    if (!jobId) {
+        return getLocationTrackingState();
+    }
+
+    if (await isMockSession()) {
+        currentJobId = jobId;
+        currentIntervalMs = intervalMs;
+        trackingPaused = false;
+        lastTrackingError = null;
+        console.log('Mock location tracking started for job:', jobId);
+        return getLocationTrackingState();
+    }
+
+    try {
         await ensureForegroundLocationPermission();
 
-        await stopLocationTracking();
+        const isDuplicateStart =
+            currentJobId === jobId &&
+            currentIntervalMs === intervalMs &&
+            (trackingTimer !== null || trackingInFlight || trackingPaused);
+
+        if (isDuplicateStart) {
+            return getLocationTrackingState();
+        }
+
+        if (currentJobId && currentJobId !== jobId) {
+            await stopLocationTracking();
+        }
+
         currentJobId = jobId;
+        currentIntervalMs = intervalMs;
+        lastTrackingError = null;
+        trackingPaused =
+            Platform.OS !== 'web' && AppState.currentState !== 'active';
 
-        locationSubscription = await Location.watchPositionAsync(
-            {
-                accuracy: Location.Accuracy.High,
-                timeInterval: 10000,
-                distanceInterval: 50,
-            },
-            async (location) => {
-                if (!currentJobId) {
-                    return;
-                }
+        ensureAppStateSubscription();
 
-                try {
-                    await jobsAPI.addLocation(
-                        currentJobId,
-                        mapCoordsToLocation(location)
-                    );
-                } catch (error) {
-                    console.error(
-                        'Error sending location update:',
-                        getLocationErrorMessage(error)
-                    );
-                }
-            }
-        );
+        if (!trackingPaused) {
+            scheduleNextTrackingTick(0);
+        }
 
         console.log('Location tracking started for job:', jobId);
+        return getLocationTrackingState();
     } catch (error) {
         const normalizedError = normalizeLocationError(error);
+        lastTrackingError = normalizedError.message;
         console.error(
             'Error starting location tracking:',
             normalizedError.message
@@ -207,13 +321,22 @@ export const startLocationTracking = async (jobId) => {
 };
 
 export const stopLocationTracking = async () => {
-    if (locationSubscription) {
-        locationSubscription.remove();
-        locationSubscription = null;
+    clearTrackingTimer();
+    removeAppStateListener();
+
+    const hadTrackingSession = Boolean(currentJobId || trackingInFlight);
+
+    currentJobId = null;
+    currentIntervalMs = 7000;
+    trackingPaused = false;
+    trackingInFlight = false;
+    lastTrackingError = null;
+
+    if (hadTrackingSession) {
         console.log('Location tracking stopped');
     }
 
-    currentJobId = null;
+    return getLocationTrackingState();
 };
 
 export const calculateDistance = (lat1, lon1, lat2, lon2) => {

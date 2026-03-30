@@ -10,3 +10,8 @@ export const ADMIN_API_KEY = 'test_admin_key_change_in_production';
 
 // Token refresh settings
 export const TOKEN_REFRESH_THRESHOLD = 60 * 1000; // Refresh 1 minute before expiry
+
+// Route service configuration
+export const ROUTE_PROVIDER = process.env.EXPO_PUBLIC_ROUTE_PROVIDER || 'mapbox';
+export const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || '';
+export const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
