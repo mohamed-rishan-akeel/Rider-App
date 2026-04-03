@@ -1,12 +1,23 @@
-import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StackScreenProps } from '@react-navigation/stack';
+import { useDispatch, useSelector } from 'react-redux';
 import { SectionHeader, StatusBadge } from '../components/Common';
 import DeliveryActionControls from '../components/DeliveryActionControls';
 import DeliveryDetailSection from '../components/DeliveryDetailSection';
 import { colors, spacing, typography } from '../styles/theme';
 import type { Delivery, DeliveryStatus } from '../types/delivery';
 import type { RootStackParamList } from '../types/navigation';
+import type { AppDispatch, RootState } from '../store/types';
+import {
+    fetchAssignedDeliveries,
+    selectAssignedDeliveries,
+} from '../store/slices/assignedDeliveriesSlice';
+import {
+    fetchDriverHome,
+    selectActiveDelivery,
+    selectAssignedDeliveries as selectHomeAssignedDeliveries,
+} from '../store/slices/homeSlice';
 import {
     DeliveryWorkflowAction,
     isWorkflowStatus,
@@ -39,7 +50,68 @@ export default function DeliveryDetailsScreen({
     route,
     navigation,
 }: DeliveryDetailsScreenProps) {
-    const [delivery, setDelivery] = useState<Delivery>(route.params.delivery);
+    const dispatch = useDispatch<AppDispatch>();
+    const activeDelivery = useSelector((state: RootState) =>
+        selectActiveDelivery(state)
+    );
+    const assignedDeliveries = useSelector((state: RootState) =>
+        selectAssignedDeliveries(state)
+    );
+    const homeAssignedDeliveries = useSelector((state: RootState) =>
+        selectHomeAssignedDeliveries(state)
+    );
+    const deliveryId = route.params.deliveryId ?? route.params.delivery?.id;
+    const matchedDelivery = useMemo(() => {
+        if (!deliveryId) {
+            return null;
+        }
+
+        if (activeDelivery?.id === deliveryId) {
+            return activeDelivery;
+        }
+
+        return (
+            assignedDeliveries.find((item) => item.id === deliveryId) ||
+            homeAssignedDeliveries.find((item) => item.id === deliveryId) ||
+            null
+        );
+    }, [
+        activeDelivery,
+        assignedDeliveries,
+        deliveryId,
+        homeAssignedDeliveries,
+    ]);
+    const [delivery, setDelivery] = useState<Delivery | null>(
+        route.params.delivery ?? matchedDelivery
+    );
+
+    useEffect(() => {
+        if (!delivery && deliveryId) {
+            void dispatch(fetchAssignedDeliveries());
+            void dispatch(fetchDriverHome());
+        }
+    }, [delivery, deliveryId, dispatch]);
+
+    useEffect(() => {
+        if (route.params.delivery) {
+            setDelivery(route.params.delivery);
+            return;
+        }
+
+        if (matchedDelivery) {
+            setDelivery(matchedDelivery);
+        }
+    }, [matchedDelivery, route.params.delivery]);
+
+    if (!delivery) {
+        return (
+            <View style={styles.loaderWrap}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={styles.loadingText}>Loading delivery details...</Text>
+            </View>
+        );
+    }
+
     const workflowStatus = isWorkflowStatus(delivery.status) ? delivery.status : null;
 
     return (
@@ -156,6 +228,18 @@ const styles = StyleSheet.create({
     content: {
         padding: spacing.lg,
         paddingBottom: spacing.xl,
+    },
+    loaderWrap: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.background,
+        padding: spacing.lg,
+    },
+    loadingText: {
+        ...typography.body,
+        color: colors.textSecondary,
+        marginTop: spacing.sm,
     },
     primaryText: {
         ...typography.body,

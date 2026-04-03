@@ -6,6 +6,7 @@ import {
     ScrollView,
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import { useDispatch, useSelector } from 'react-redux';
 import {
     SurfaceCard,
     StatusBadge,
@@ -19,6 +20,7 @@ import {
     getCurrentLocation,
     getLocationErrorMessage,
 } from '../services/location';
+import { fetchDriverHome, selectActiveDelivery } from '../store/slices/homeSlice';
 import { colors, spacing, typography, radii } from '../styles/theme';
 
 const toneForStatus = (status) => {
@@ -91,8 +93,14 @@ const buildMapRegion = (coordinates) => {
 };
 
 export default function ActiveDeliveryScreen({ route: navigationRoute, navigation }) {
+    const dispatch = useDispatch();
+    const activeDelivery = useSelector(selectActiveDelivery);
+    const routeJobId = navigationRoute.params?.jobId;
+    const initialJob =
+        navigationRoute.params?.job ||
+        (activeDelivery && activeDelivery.id === routeJobId ? activeDelivery : null);
     const mapRef = useRef(null);
-    const [job, setJob] = useState(navigationRoute.params?.job || null);
+    const [job, setJob] = useState(initialJob);
     const [driverLocation, setDriverLocation] = useState(null);
     const [routeError, setRouteError] = useState(null);
     const [isResolvingRoute, setIsResolvingRoute] = useState(true);
@@ -102,6 +110,23 @@ export default function ActiveDeliveryScreen({ route: navigationRoute, navigatio
             status: job?.status,
             intervalMs: 7000,
         });
+
+    useEffect(() => {
+        if (!job && routeJobId) {
+            void dispatch(fetchDriverHome());
+        }
+    }, [dispatch, job, routeJobId]);
+
+    useEffect(() => {
+        if (navigationRoute.params?.job) {
+            setJob(navigationRoute.params.job);
+            return;
+        }
+
+        if (activeDelivery && (!routeJobId || activeDelivery.id === routeJobId)) {
+            setJob(activeDelivery);
+        }
+    }, [activeDelivery, navigationRoute.params?.job, routeJobId]);
 
     useEffect(() => {
         if (!job) {

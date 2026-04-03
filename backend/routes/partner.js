@@ -17,6 +17,7 @@ router.get('/profile', async (req, res, next) => {
         const result = await query(
             `SELECT id, email, full_name, phone, vehicle_type, vehicle_number,
       profile_photo_url, bio, address, emergency_contact_name, emergency_contact_phone,
+      push_token, push_platform, push_token_updated_at,
       status, current_latitude, current_longitude, rating, total_deliveries,
       created_at, updated_at 
       FROM delivery_partners WHERE id = $1`,
@@ -133,13 +134,57 @@ router.put(
         WHERE id = $${paramCount} 
         RETURNING id, email, full_name, phone, vehicle_type, vehicle_number,
         profile_photo_url, bio, address, emergency_contact_name, emergency_contact_phone,
-        status, rating, total_deliveries`,
+        push_token, push_platform, push_token_updated_at, status, rating, total_deliveries`,
                 values
             );
 
             res.json({
                 success: true,
                 message: 'Profile updated successfully',
+                data: result.rows[0],
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+/**
+ * PUT /api/partner/push-token
+ * Save the device push token
+ */
+router.put(
+    '/push-token',
+    [
+        body('pushToken').trim().notEmpty(),
+        body('devicePlatform').optional().isIn(['android', 'ios', 'web', 'unknown']),
+    ],
+    async (req, res, next) => {
+        try {
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid push token payload',
+                    errors: errors.array(),
+                });
+            }
+
+            const { pushToken, devicePlatform = 'unknown' } = req.body;
+
+            const result = await query(
+                `UPDATE delivery_partners
+         SET push_token = $1,
+             push_platform = $2,
+             push_token_updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3
+         RETURNING push_token, push_platform, push_token_updated_at`,
+                [pushToken, devicePlatform, req.user.id]
+            );
+
+            res.json({
+                success: true,
+                message: 'Push token saved successfully',
                 data: result.rows[0],
             });
         } catch (error) {

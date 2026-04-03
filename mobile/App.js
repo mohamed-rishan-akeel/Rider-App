@@ -18,9 +18,16 @@ import ProfileScreen from './screens/ProfileScreen';
 
 import { getAccessToken } from './services/storage';
 import { requestLocationPermission } from './services/location';
+import {
+    addNotificationListeners,
+    consumeInitialNotificationAsync,
+    registerForPushNotificationsAsync,
+} from './services/notifications';
+import { flushPendingNavigation, navigationRef } from './services/navigation';
 import { colors, shadows } from './styles/theme';
 import store from './store';
 import { hydrateAvailability } from './store/slices/availabilitySlice';
+import { fetchDriverHome } from './store/slices/homeSlice';
 
 const Stack = createStackNavigator();
 
@@ -46,6 +53,19 @@ function AppContent() {
         requestLocationPermission();
     }, []);
 
+    useEffect(() => {
+        const removeNotificationListeners = addNotificationListeners({
+            onForegroundNotification: (notification) => {
+                console.log(
+                    'Foreground notification received:',
+                    notification.request.identifier
+                );
+            },
+        });
+
+        return removeNotificationListeners;
+    }, []);
+
     const checkAuth = async () => {
         try {
             const token = await getAccessToken();
@@ -54,6 +74,14 @@ function AppContent() {
 
             if (authenticated) {
                 dispatch(hydrateAvailability());
+                dispatch(fetchDriverHome());
+                const registration = await registerForPushNotificationsAsync();
+
+                if (registration.status === 'error' && registration.error) {
+                    console.warn('Push registration failed:', registration.error);
+                }
+
+                await consumeInitialNotificationAsync();
             }
         } catch (error) {
             console.error('Auth check error:', error);
@@ -73,7 +101,11 @@ function AppContent() {
     return (
         <>
             <StatusBar style="dark" />
-            <NavigationContainer theme={navTheme}>
+            <NavigationContainer
+                ref={navigationRef}
+                theme={navTheme}
+                onReady={flushPendingNavigation}
+            >
                 <Stack.Navigator
                     screenOptions={{
                         headerStyle: styles.headerStyle,
