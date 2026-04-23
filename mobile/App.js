@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Platform } from 'react-native';
 import { Provider, useDispatch } from 'react-redux';
+import { Ionicons } from '@expo/vector-icons';
 
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
@@ -30,6 +32,7 @@ import { hydrateAvailability } from './store/slices/availabilitySlice';
 import { fetchDriverHome } from './store/slices/homeSlice';
 
 const Stack = createStackNavigator();
+const Tab = createBottomTabNavigator();
 
 const navTheme = {
     ...DefaultTheme,
@@ -38,10 +41,59 @@ const navTheme = {
         background: colors.background,
         card: colors.surface,
         text: colors.text,
-        primary: colors.primary,
+        primary: colors.secondary,
         border: colors.border,
     },
 };
+
+function MainTabs() {
+    return (
+        <Tab.Navigator
+            screenOptions={({ route }) => ({
+                headerShown: false,
+                tabBarStyle: styles.tabBar,
+                tabBarActiveTintColor: colors.secondary,
+                tabBarInactiveTintColor: colors.textMuted,
+                tabBarLabelStyle: styles.tabLabel,
+                tabBarItemStyle: styles.tabItem,
+                tabBarIcon: ({ focused, color, size }) => {
+                    let iconName;
+                    if (route.name === 'Home') {
+                        iconName = focused ? 'home' : 'home-outline';
+                    } else if (route.name === 'AssignedDeliveries') {
+                        iconName = focused ? 'car' : 'car-outline';
+                    } else if (route.name === 'JobHistory') {
+                        iconName = focused ? 'receipt' : 'receipt-outline';
+                    } else if (route.name === 'Profile') {
+                        iconName = focused ? 'person-circle' : 'person-circle-outline';
+                    }
+                    return <Ionicons name={iconName} size={24} color={color} />;
+                },
+            })}
+        >
+            <Tab.Screen
+                name="Home"
+                component={HomeScreen}
+                options={{ tabBarLabel: 'Home' }}
+            />
+            <Tab.Screen
+                name="AssignedDeliveries"
+                component={AssignedDeliveriesScreen}
+                options={{ tabBarLabel: 'Assigned' }}
+            />
+            <Tab.Screen
+                name="JobHistory"
+                component={JobHistoryScreen}
+                options={{ tabBarLabel: 'History' }}
+            />
+            <Tab.Screen
+                name="Profile"
+                component={ProfileScreen}
+                options={{ tabBarLabel: 'Profile' }}
+            />
+        </Tab.Navigator>
+    );
+}
 
 function AppContent() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -93,7 +145,7 @@ function AppContent() {
     if (isLoading) {
         return (
             <View style={styles.loader}>
-                <ActivityIndicator size="large" color={colors.primary} />
+                <ActivityIndicator size="large" color={colors.secondary} />
             </View>
         );
     }
@@ -115,9 +167,13 @@ function AppContent() {
                         headerShadowVisible: false,
                         cardStyle: { backgroundColor: colors.background },
                     }}
-                    initialRouteName={isAuthenticated ? 'Home' : 'Login'}
+                    initialRouteName={isAuthenticated ? 'MainTabs' : 'Login'}
                 >
-                    <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Dashboard' }} />
+                    <Stack.Screen
+                        name="MainTabs"
+                        component={MainTabs}
+                        options={{ headerShown: false }}
+                    />
                     <Stack.Screen
                         name="DeliveryDetails"
                         component={DeliveryDetailsScreen}
@@ -129,11 +185,6 @@ function AppContent() {
                         options={{ title: 'Available Jobs' }}
                     />
                     <Stack.Screen
-                        name="AssignedDeliveries"
-                        component={AssignedDeliveriesScreen}
-                        options={{ title: 'Assigned Deliveries' }}
-                    />
-                    <Stack.Screen
                         name="ActiveDelivery"
                         component={ActiveDeliveryScreen}
                         options={{ title: 'Active Delivery' }}
@@ -142,16 +193,6 @@ function AppContent() {
                         name="ProofOfDelivery"
                         component={ProofOfDeliveryScreen}
                         options={{ title: 'Proof of Delivery' }}
-                    />
-                    <Stack.Screen
-                        name="JobHistory"
-                        component={JobHistoryScreen}
-                        options={{ title: 'Delivery History' }}
-                    />
-                    <Stack.Screen
-                        name="Profile"
-                        component={ProfileScreen}
-                        options={{ title: 'My Profile' }}
                     />
                     <Stack.Screen
                         name="Login"
@@ -192,5 +233,22 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: '700',
         color: colors.text,
+    },
+    tabBar: {
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        height: Platform.OS === 'ios' ? 88 : 64,
+        paddingTop: 8,
+        paddingBottom: Platform.OS === 'ios' ? 28 : 10,
+        ...shadows.medium,
+    },
+    tabLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    tabItem: {
+        paddingVertical: 4,
     },
 });
