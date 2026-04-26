@@ -96,9 +96,9 @@ const CRITICAL_ACTION_DETAILS: Partial<
         confirmLabel: 'Start Transit',
     },
     [DeliveryWorkflowAction.COMPLETE_DELIVERY]: {
-        title: 'Mark Delivered',
-        message: 'Confirm that the order has been handed off to the customer.',
-        confirmLabel: 'Mark Delivered',
+        title: 'Complete Delivery',
+        message: 'Continue to the proof-of-delivery step. The order will be completed only after proof is submitted.',
+        confirmLabel: 'Continue to Proof',
     },
 };
 
@@ -176,6 +176,19 @@ export default function DeliveryActionControls({
                         getNextStatusForAction(delivery.status, action) ?? delivery.status,
                 };
             } else {
+                if (action === DeliveryWorkflowAction.COMPLETE_DELIVERY) {
+                    nextDelivery = {
+                        ...delivery,
+                    };
+
+                    onDeliveryChange?.(nextDelivery);
+                    onActionSuccess?.({ action, delivery: nextDelivery });
+                    setPickupNote('');
+                    setLastFailedRequest(null);
+                    didSucceed = true;
+                    return;
+                }
+
                 const nextStatus = getNextStatusForAction(delivery.status, action);
 
                 if (!nextStatus) {

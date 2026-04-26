@@ -102,13 +102,16 @@ router.get('/history', async (req, res, next) => {
         const offset = parseInt(req.query.offset) || 0;
 
         const result = await query(
-            `SELECT id, order_number, customer_name,
-      pickup_address, dropoff_address,
-      distance_km, payment_amount,
-      status, assigned_at, picked_up_at, delivered_at
-      FROM delivery_jobs
-      WHERE partner_id = $1 AND status IN ('delivered', 'cancelled')
-      ORDER BY delivered_at DESC
+            `SELECT dj.id, dj.order_number, dj.customer_name,
+      dj.pickup_address, dj.dropoff_address,
+      dj.distance_km, dj.payment_amount,
+      dj.status, dj.assigned_at, dj.picked_up_at, dj.delivered_at,
+      pod.photo_url, pod.signature_data, pod.recipient_name,
+      pod.notes, pod.created_at AS proof_submitted_at
+      FROM delivery_jobs dj
+      LEFT JOIN proof_of_delivery pod ON pod.job_id = dj.id
+      WHERE dj.partner_id = $1 AND dj.status IN ('delivered', 'cancelled')
+      ORDER BY dj.delivered_at DESC NULLS LAST, pod.created_at DESC NULLS LAST
       LIMIT $2 OFFSET $3`,
             [req.user.id, limit, offset]
         );
@@ -481,7 +484,7 @@ router.post(
 router.post(
     '/:id/proof',
     [
-        body('photoUrl').optional().isURL(),
+        body('photoUrl').optional().isString().trim().notEmpty(),
         body('signatureData').optional().notEmpty(),
         body('recipientName').optional().trim(),
         body('notes').optional().trim(),
@@ -489,6 +492,7 @@ router.post(
         body('longitude').optional().isFloat({ min: -180, max: 180 }),
     ],
     async (req, res, next) => {
+        const client = await getClient();
         try {
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
@@ -501,33 +505,56 @@ router.post(
 
             const jobId = parseInt(req.params.id);
             const { photoUrl, signatureData, recipientName, notes, latitude, longitude } = req.body;
+            const proofReason = 'Proof of delivery submitted and archived';
+
+            if (!photoUrl && !signatureData) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please provide a delivery photo or signature',
+                });
+            }
+
+            await client.query('BEGIN');
 
             // Verify job belongs to partner and is in correct status
-            const jobCheck = await query(
-                'SELECT id, status FROM delivery_jobs WHERE id = $1 AND partner_id = $2',
+            const jobCheck = await client.query(
+                'SELECT id, order_number, status, delivered_at FROM delivery_jobs WHERE id = $1 AND partner_id = $2',
                 [jobId, req.user.id]
             );
 
             if (jobCheck.rows.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({
                     success: false,
                     message: 'Job not found or not assigned to you',
                 });
             }
 
-            if (jobCheck.rows[0].status === 'delivered') {
+            const job = jobCheck.rows[0];
+            const canArchiveProof = ['in_transit', 'arrived_at_dropoff', 'delivered'].includes(job.status);
+
+            if (!canArchiveProof) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({
                     success: false,
-                    message: 'Proof already submitted for this job',
+                    message: 'Proof can only be submitted when the delivery is ready to complete',
                 });
             }
 
-            // Insert proof of delivery
-            const result = await query(
-                `INSERT INTO proof_of_delivery 
+            // Insert or update proof of delivery so the archive stays attached to the job lifecycle.
+            const proofResult = await client.query(
+                `INSERT INTO proof_of_delivery
         (job_id, partner_id, photo_url, signature_data, recipient_name, notes, delivery_latitude, delivery_longitude)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id, created_at`,
+        ON CONFLICT (job_id)
+        DO UPDATE SET
+            photo_url = COALESCE(EXCLUDED.photo_url, proof_of_delivery.photo_url),
+            signature_data = COALESCE(EXCLUDED.signature_data, proof_of_delivery.signature_data),
+            recipient_name = COALESCE(EXCLUDED.recipient_name, proof_of_delivery.recipient_name),
+            notes = COALESCE(EXCLUDED.notes, proof_of_delivery.notes),
+            delivery_latitude = COALESCE(EXCLUDED.delivery_latitude, proof_of_delivery.delivery_latitude),
+            delivery_longitude = COALESCE(EXCLUDED.delivery_longitude, proof_of_delivery.delivery_longitude)
+        RETURNING id, photo_url, signature_data, recipient_name, notes, created_at`,
                 [
                     jobId,
                     req.user.id,
@@ -540,13 +567,60 @@ router.post(
                 ]
             );
 
+            let deliveredAt = job.delivered_at;
+
+            if (job.status !== 'delivered') {
+                const deliveryResult = await client.query(
+                    `UPDATE delivery_jobs
+                     SET status = 'delivered',
+                         delivered_at = NOW()
+                     WHERE id = $1
+                     RETURNING delivered_at`,
+                    [jobId]
+                );
+
+                deliveredAt = deliveryResult.rows[0]?.delivered_at ?? null;
+
+                await client.query(
+                    `INSERT INTO job_status_logs (job_id, partner_id, status, reason, latitude, longitude)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [
+                        jobId,
+                        req.user.id,
+                        'delivered',
+                        proofReason,
+                        latitude || null,
+                        longitude || null,
+                    ]
+                );
+
+                await client.query(
+                    `UPDATE delivery_partners
+                     SET status = $1,
+                         total_deliveries = total_deliveries + 1
+                     WHERE id = $2`,
+                    ['online', req.user.id]
+                );
+            }
+
+            await client.query('COMMIT');
+
             res.json({
                 success: true,
-                message: 'Proof of delivery submitted successfully',
-                data: result.rows[0],
+                message: 'Delivery completed and proof archived successfully',
+                data: {
+                    id: jobId,
+                    orderNumber: job.order_number,
+                    status: 'delivered',
+                    deliveredAt,
+                    proof: proofResult.rows[0],
+                },
             });
         } catch (error) {
+            await client.query('ROLLBACK');
             next(error);
+        } finally {
+            client.release();
         }
     }
 );
